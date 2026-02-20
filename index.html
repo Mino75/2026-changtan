@@ -1,26 +1,205 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Changtan Demo</title>
-  </head>
-  <body>
-    <h1>Changtan Demo</h1>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Changtan — Feature Demonstrator</title>
 
-    <script>
-      // Must be defined BEFORE loading /main.js
-      window.CTChatConfig = {
-        wsEndpoints: [],           // leave empty if you only want to verify UI loads
-        title: "Changtan",
-        launcherEmoji: "🦜",
-        modeLabel: "Chat",
-        conversationId: null,
-        client: { name: "demo", version: "1.0.0" }
-      };
-    </script>
+  <!-- Load styling bundle first (injects CSS) -->
+  <script src="/styles.js" defer></script>
+</head>
 
-    <!-- Loads your widget bundle -->
-    <script src="/main.js" defer></script>
-  </body>
+<body>
+  <main class="wrap">
+    <header class="hero panel">
+      <div class="hero__left">
+        <div class="kicker">
+          <span class="badge">Feature Demonstrator</span>
+          <span class="badge">Real main.js load</span>
+          <span class="badge">Scroll + overlay validation</span>
+        </div>
+
+        <h1>Changtan Web Chat — Production Demonstrator</h1>
+
+        <p class="sub">
+          This page demonstrates the Changtan widget exactly as it runs on a customer website: loaded as an external
+          script, configured via <code>window.CTChatConfig</code>, and rendered as a floating UI. Use this page to validate
+          visual fidelity, z-index behavior, scroll robustness, and responsive performance.
+        </p>
+
+        <div class="cta-row">
+          <button class="btn" id="openChatBtn" type="button">Open chat</button>
+          <button class="btn secondary" id="toTop" type="button">Scroll to top</button>
+          <button class="btn secondary" id="toBottom" type="button">Scroll to bottom</button>
+        </div>
+
+        <p class="note">
+          To run a full end-to-end demo, set <b>wsEndpoints</b> to a real <b>wss://</b> endpoint. If this page is served
+          over HTTPS, do not use <code>ws://</code> endpoints (browsers will block mixed content).
+        </p>
+      </div>
+
+      <aside class="hero__right">
+        <div class="mini panel">
+          <div class="mini__head">
+            <span>Integration Snapshot</span>
+            <span class="badge badge--muted">load-time config</span>
+          </div>
+          <div class="mini__body">
+            <div class="kv">
+              <div class="kv__k">Script</div>
+              <div class="kv__v"><code>https://changtan.kahiether.com/main.js</code></div>
+            </div>
+            <div class="kv">
+              <div class="kv__k">Launcher</div>
+              <div class="kv__v">Enlarged via CSS override (no bundle changes)</div>
+            </div>
+            <div class="kv">
+              <div class="kv__k">Purpose</div>
+              <div class="kv__v">Verify UI load + interactions on a real page</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mini panel">
+          <div class="mini__head">
+            <span>Operational Checklist</span>
+            <span class="badge badge--muted">DevTools</span>
+          </div>
+          <div class="mini__body">
+            <ul class="list">
+              <li><b>Network</b>: <code>main.js</code> returns <code>200</code></li>
+              <li><b>Console</b>: no CSP / mixed-content errors</li>
+              <li><b>Layout</b>: launcher stays clickable while scrolling</li>
+              <li><b>Z-index</b>: panel overlays sticky headers</li>
+            </ul>
+          </div>
+        </div>
+      </aside>
+    </header>
+
+    <section class="content panel">
+      <div class="content__head">
+        <h2>Scroll Stress Area</h2>
+        <p>
+          This section simulates long, structured content with a sticky table header. It helps validate that the widget
+          remains interactive during scroll and that overlays are not clipped by layout containers.
+        </p>
+      </div>
+
+      <div class="scroll" id="scrollArea" aria-label="Scroll test area">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:160px;">Section</th>
+              <th>Content</th>
+              <th style="width:220px;">Focus</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <div class="foot__inner">
+        <div class="foot__brand">Changtan</div>
+        <div class="foot__meta">
+          Feature demonstrator — UI/UX, performance, and integration verification.
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <script>
+    // Build long content for scroll testing (realistic text, predictable structure)
+    (function buildRows(){
+      const tbody = document.getElementById("rows");
+      const blocks = [
+        {
+          title: "Discovery",
+          body:
+            "Visitors can open the widget from any page state (top, mid-scroll, deep-scroll). This validates launcher hitbox, focus handling, and overlay behavior.",
+          focus: "Launcher click + focus"
+        },
+        {
+          title: "Conversation",
+          body:
+            "The panel should remain stable during scroll and resizing. Input should be reachable and readable, and message history must not be affected by page layout.",
+          focus: "Panel stability"
+        },
+        {
+          title: "Resilience",
+          body:
+            "When endpoints are unavailable, the UI still loads. Status messaging should remain clear, and the site must not break if the service is offline.",
+          focus: "Offline-safe UI"
+        },
+        {
+          title: "Branding",
+          body:
+            "Theme tokens and CSS overrides support brand-aligned deployments without modifying the core bundle. This is essential for multi-tenant rollout.",
+          focus: "Theme + overrides"
+        }
+      ];
+
+      for (let i = 1; i <= 80; i++) {
+        const b = blocks[i % blocks.length];
+        const tr = document.createElement("tr");
+
+        const a = document.createElement("td");
+        a.textContent = `${b.title} ${String(i).padStart(2, "0")}`;
+
+        const c = document.createElement("td");
+        c.textContent = b.body;
+
+        const d = document.createElement("td");
+        d.textContent = b.focus;
+
+        tr.append(a, c, d);
+        tbody.appendChild(tr);
+      }
+    })();
+
+    document.getElementById("toTop").addEventListener("click", () => {
+      document.getElementById("scrollArea").scrollTop = 0;
+    });
+    document.getElementById("toBottom").addEventListener("click", () => {
+      const el = document.getElementById("scrollArea");
+      el.scrollTop = el.scrollHeight;
+    });
+
+    // IMPORTANT: define config BEFORE loading the remote script
+    window.CTChatConfig = {
+      // Replace with your production WS endpoint(s) for end-to-end chat:
+      // Example: ["wss://api.yourdomain.com/changtan"]
+      wsEndpoints: ["wss://YOUR-REAL-WS-ENDPOINT"],
+
+      title: "Changtan",
+      launcherEmoji: "🦜",
+      modeLabel: "Chat",
+      conversationId: null,
+
+      // Blue background + brand-ready theme
+      theme: {
+        accent: "#2f6bff",
+        bg: "#06113a",
+        panel: "#0b163a",
+        text: "#e5e7eb",
+        muted: "rgba(229,231,235,0.65)",
+        border: "rgba(255,255,255,0.12)",
+        shadow: "0 16px 48px rgba(0,0,0,0.45)"
+      },
+
+      client: { name: "feature-demo", version: "1.0.0" }
+    };
+
+    // Convenience: open chat from the page control (still loads the real main.js)
+    document.getElementById("openChatBtn").addEventListener("click", () => {
+      if (window.CTChat && typeof window.CTChat.open === "function") window.CTChat.open();
+    });
+  </script>
+
+  <!-- Real remote load (no simulation) -->
+  <script src="https://changtan.kahiether.com/main.js" defer></script>
+</body>
 </html>
