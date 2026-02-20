@@ -63,15 +63,6 @@ const MAIN_JS = `/* Changtan main.js (embedded bundle) */
 ${"__REPLACE_WITH_YOUR_SINGLE_FILE_CHAT_BUNDLE__"}
 `;
 
-// Optional minimal health endpoint. Remove if you want strictly /main.js only.
-app.get("/health", (req, res) => {
-  res.json({
-    status: "ok",
-    service: "changtan-assets",
-    ts: new Date().toISOString(),
-  });
-});
-
 // Main script endpoint
 app.get("/main.js", (req, res) => {
   res.setHeader("Content-Type", "application/javascript; charset=utf-8");
