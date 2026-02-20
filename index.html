@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Changtan Demo</title>
+  </head>
+  <body>
+    <h1>Changtan Demo</h1>
+
+    <script>
+      // Must be defined BEFORE loading /main.js
+      window.CTChatConfig = {
+        wsEndpoints: [],           // leave empty if you only want to verify UI loads
+        title: "Changtan",
+        launcherEmoji: "🦜",
+        modeLabel: "Chat",
+        conversationId: null,
+        client: { name: "demo", version: "1.0.0" }
+      };
+    </script>
+
+    <!-- Loads your widget bundle -->
+    <script src="/main.js" defer></script>
+  </body>
+</html>
