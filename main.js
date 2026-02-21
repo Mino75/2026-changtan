@@ -94,7 +94,43 @@
         box-shadow:var(--ct-shadow);
         display:flex;align-items:center;justify-content:center;
         cursor:pointer;user-select:none;
+        font-family: var(--ct-font);
+        font-size: 40px;
+        line-height: 1;
+        padding: 0;
+        margin: 0;
+        border: 1px solid var(--ct-border);
+        appearance: none;
+        -webkit-appearance: none;
+        font-variant-emoji: emoji;
+        transition: transform .12s ease, filter .12s ease, background .12s ease, box-shadow .12s ease;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
       }
+
+      /* Hover (*/
+      @media (hover:hover) and (pointer:fine){
+        .ct-launcher:hover{
+          background: radial-gradient(120% 120% at 20% 10%,
+            rgba(47,107,255,0.28) 0%,
+            rgba(255,255,255,0.06) 70%);
+          filter: brightness(1.06);
+          transform: translateY(-1px);
+        }
+      }
+      
+      /* Click / press feedback */
+      .ct-launcher:active{
+        transform: translateY(0px) scale(0.98);
+        filter: brightness(0.98);
+      }
+      
+      /* Keyboard accessibility */
+      .ct-launcher:focus-visible{
+        outline: 2px solid rgba(47,107,255,0.75);
+        outline-offset: 3px;
+      }
+      
       .ct-panel{
         position:absolute;left:0;bottom:70px;
         width:${CFG.width}px;height:${CFG.height}px;
