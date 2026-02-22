@@ -483,6 +483,17 @@
 
     document.head.appendChild($("style", { "data-changtan-style": "1" }, [document.createTextNode(CSS)]));
 
+    const STATE = {
+      open: false,
+      token: null, // memory only
+      models: [],
+      selectedModel: CFG.ui.defaultModel || null,
+      messages: [],
+      busy: false,
+      useHistory: true
+    };
+
+    
     // ------------------------------------------------------------
     // UI build
     // ------------------------------------------------------------
@@ -492,7 +503,7 @@
     const historyBtn = $("button", {
       class: "ct-btn",
       type: "button",
-      title: "History: off",
+      title: "History: on",
       "aria-label": "Toggle history",
       onClick: () => {
         STATE.useHistory = !STATE.useHistory;
@@ -525,6 +536,7 @@
       ]),
       $("div", { class: "ct-actions" }, [
         $("button", { class: "ct-btn", type: "button", title: "Connect", onClick: () => UI.showTokenModal() }, [document.createTextNode("🔑")]),
+        historyBtn,
         $("button", { class: "ct-btn", type: "button", title: "Refresh models", onClick: () => Actions.refreshModels() }, [document.createTextNode("↻")]),
         $("button", { class: "ct-btn", type: "button", title: "Clear", onClick: () => API.clear() }, [document.createTextNode("🧹")]),
         $("button", { class: "ct-btn", type: "button", title: "Close", onClick: () => API.close() }, [document.createTextNode("✖️")])
@@ -595,15 +607,7 @@
     // ------------------------------------------------------------
     // STATE
     // ------------------------------------------------------------
-    const STATE = {
-      open: false,
-      token: null, // memory only
-      models: [],
-      selectedModel: CFG.ui.defaultModel || null,
-      messages: [],
-      busy: false,
-      useHistory: true
-    };
+
 
     const setStatus = (txt) => { statusPill.textContent = txt; };
     const setModelPill = (modelId) => { modelPill.textContent = modelId ? `model: ${modelId}` : "model: -"; };
@@ -636,7 +640,11 @@ const historyLine = (m) => {
   // History
   const buildHistoryString = () => {
     // Option :  "Ready." 
-    const msgs = STATE.messages.filter((m) => (m && m.content && m.content !== "Ready."));
+    const msgs = STATE.messages.filter((m) =>
+      m && m.content && m.content !== "Ready." &&
+      (m.role === "user" || m.role === "assistant") &&
+      !String(m.content).startsWith("⚠️")
+    );
   
     const picked = [];
     let total = 0;
