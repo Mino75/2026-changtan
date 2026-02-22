@@ -3,8 +3,10 @@
 
   try {
     // ------------------------------------------------------------
-    // Changtan Embed (No WS). Simple API (token -> list models -> infer)
-    // Token is stored in-memory only (lost on page close).
+    // Changtan Embed (No WS)
+    // Fixed base URL + user-provided token endpoint (hidden after connect)
+    // Models: GET /getAvailableTextModels with x-api-key
+    // Infer: POST /inferChatWithoutStream with x-api-key
     // ------------------------------------------------------------
 
     const DEFAULTS = {
@@ -25,22 +27,21 @@
         shadow: "0 16px 48px rgba(0,0,0,0.45)"
       },
 
-      // API config:
-      // - user provides baseUrl in UI (not known by front at build time)
-      // - token endpoint name is configurable (default: /getToken)
       api: {
-        defaultBaseUrl: "https://mpanatitra.kahiether.com",
-        tokenPath: "/getToken", // <-- adjust if your token endpoint differs
+        // FIXED (not editable in UI)
+        baseUrl: "https://mpanatitra.kahiether.com",
+
+        // user provides this FULL token URL in a hidden modal (not stored persistently)
+        tokenUrlPlaceholder: "https://your-domain.com/getToken",
+
         modelsPath: "/getAvailableTextModels",
         inferPath: "/inferChatWithoutStream",
         apiKeyHeader: "x-api-key",
         requestTimeoutMs: 25000
       },
 
-      // UI defaults
       ui: {
-        defaultModel: null, // if null => choose first returned model
-        showModelPicker: true
+        defaultModel: null // if null => first model
       }
     };
 
@@ -65,7 +66,7 @@
     window.__CHANGTAN_EMBED__ = true;
 
     // ------------------------------------------------------------
-    // DOM helpers
+    // Helpers
     // ------------------------------------------------------------
     const $ = (tag, attrs = {}, children = []) => {
       const n = document.createElement(tag);
@@ -87,9 +88,10 @@
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
 
+    const normalizeUrl = (u) => String(u || "").trim().replace(/\s+/g, "");
+
     const normalizeBaseUrl = (u) => {
-      let s = String(u || "").trim();
-      if (!s) return "";
+      let s = normalizeUrl(u);
       s = s.replace(/\/+$/, "");
       return s;
     };
@@ -103,19 +105,50 @@
       return b + "/" + p;
     };
 
+    const basicAuthHeader = (user, pass) => {
+      const u = String(user || "");
+      const p = String(pass || "");
+      if (!u && !p) return null;
+      // btoa expects Latin1; for safety, encodeURIComponent trick
+      const raw = `${u}:${p}`;
+      const b64 = btoa(unescape(encodeURIComponent(raw)));
+      return `Basic ${b64}`;
+    };
+
     const abortableFetch = async (url, opts = {}, timeoutMs = 25000) => {
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs | 0));
       try {
-        const res = await fetch(url, { ...opts, signal: controller.signal });
-        return res;
+        // Important: in browser, CORS applies. Postman does not.
+        return await fetch(url, {
+          mode: "cors",
+          credentials: "omit",
+          cache: "no-store",
+          redirect: "follow",
+          ...opts,
+          signal: controller.signal
+        });
       } finally {
         clearTimeout(t);
       }
     };
 
+    const readErrorBody = async (res) => {
+      try {
+        const ct = res.headers.get("content-type") || "";
+        if (ct.includes("application/json")) {
+          const j = await res.json();
+          return j?.error || j?.message || JSON.stringify(j);
+        }
+        const t = await res.text();
+        return t || "";
+      } catch {
+        return "";
+      }
+    };
+
     // ------------------------------------------------------------
-    // Styles (hardened)
+    // Styles
     // ------------------------------------------------------------
     const THEME = CFG.theme;
 
@@ -220,6 +253,7 @@
       }
       [data-changtan="1"] .ct-title{ display:flex;align-items:center;gap:10px; min-width:0; }
       [data-changtan="1"] .ct-name{ font-size:14px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+
       [data-changtan="1"] .ct-pill{
         padding:5px 10px;border-radius:999px;border:1px solid var(--ct-border);
         background: rgba(255,255,255,0.03);
@@ -234,9 +268,10 @@
         display:flex;align-items:center;justify-content:center;
       }
       [data-changtan="1"] .ct-btn:hover{ background: rgba(255,255,255,0.06); }
+      [data-changtan="1"] .ct-btn:disabled{ opacity:0.5; cursor:not-allowed; }
 
       [data-changtan="1"] .ct-body{
-        height: calc(100% - 56px - 110px);
+        height: calc(100% - 56px - 120px);
         overflow:auto;
         padding: 14px 12px 18px 12px;
       }
@@ -258,7 +293,7 @@
       [data-changtan="1"] .ct-meta{ font-size:10.5px;color:var(--ct-muted);margin-top:6px; }
 
       [data-changtan="1"] .ct-footer{
-        height:110px;display:flex;flex-direction:column;gap:8px;
+        height:120px;display:flex;flex-direction:column;gap:8px;
         padding:10px 12px;
         border-top:1px solid var(--ct-border);
         background: rgba(0,0,0,0.10);
@@ -312,18 +347,47 @@
       }
       [data-changtan="1"] .ct-send:disabled{ opacity:0.5; cursor:not-allowed; }
 
-      [data-changtan="1"] .ct-status{ display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--ct-muted); }
-      [data-changtan="1"] .ct-status b{ color: rgba(229,231,235,0.9); font-weight:650; }
-
-      [data-changtan="1"] .ct-linkbtn{
-        all: unset;
-        cursor: pointer;
-        font-size: 10.5px;
-        color: rgba(229,231,235,0.9);
-        opacity: 0.9;
-        text-decoration: underline;
+      /* Modal (hidden by default) */
+      [data-changtan="1"] .ct-modal{
+        position:absolute;
+        inset: 0;
+        display:none;
+        align-items:center;
+        justify-content:center;
+        background: rgba(0,0,0,0.35);
+        backdrop-filter: blur(6px);
+        z-index: 10;
       }
-      [data-changtan="1"] .ct-linkbtn:hover{ opacity: 1; }
+      [data-changtan="1"] .ct-modal.ct-show{ display:flex; }
+      [data-changtan="1"] .ct-modal-card{
+        width: calc(100% - 28px);
+        max-width: 420px;
+        border-radius: 16px;
+        border: 1px solid var(--ct-border);
+        background: rgba(17,24,39,0.95);
+        box-shadow: var(--ct-shadow);
+        padding: 12px;
+      }
+      [data-changtan="1"] .ct-modal-head{
+        display:flex;align-items:center;justify-content:space-between;
+        color: var(--ct-text);
+        margin-bottom: 10px;
+      }
+      [data-changtan="1"] .ct-modal-title{
+        font-size: 13px;
+        font-weight: 650;
+      }
+      [data-changtan="1"] .ct-modal-body{
+        display:flex;flex-direction:column;gap:10px;
+      }
+      [data-changtan="1"] .ct-modal-actions{
+        display:flex;gap:8px;justify-content:flex-end;
+        margin-top: 10px;
+      }
+      [data-changtan="1"] .ct-primary{
+        border: 1px solid rgba(47,107,255,0.45);
+        background: rgba(47,107,255,0.18);
+      }
     `;
 
     document.head.appendChild($("style", { "data-changtan-style": "1" }, [document.createTextNode(CSS)]));
@@ -334,21 +398,8 @@
     const root = $("div", { class: "ct-root", "data-changtan": "1" });
     const panel = $("div", { class: "ct-panel", role: "dialog", "aria-label": "Changtan chat" });
 
-    const statusPill = $("span", { class: "ct-pill", "data-ct-status": "1" }, [document.createTextNode("unconfigured")]);
+    const statusPill = $("span", { class: "ct-pill", "data-ct-status": "1" }, [document.createTextNode("disconnected")]);
     const modelPill = $("span", { class: "ct-pill", "data-ct-model": "1" }, [document.createTextNode("model: -")]);
-
-    const body = $("div", { class: "ct-body" });
-    const textarea = $("textarea", { class: "ct-input", rows: "1", placeholder: "Type a message…" });
-    const sendBtn = $("button", { class: "ct-send", type: "button" }, [document.createTextNode("📨")]);
-
-    // Config controls
-    const baseUrlInput = $("input", { class: "ct-text", type: "text", placeholder: "API base URL (https://…)", value: CFG.api.defaultBaseUrl || "" });
-    const tokenBtn = $("button", { class: "ct-btn", type: "button", title: "Connect" }, [document.createTextNode("🔑")]);
-    const refreshModelsBtn = $("button", { class: "ct-btn", type: "button", title: "Refresh models" }, [document.createTextNode("↻")]);
-
-    const modelSelect = $("select", { class: "ct-select" }, [
-      $("option", { value: "" }, [document.createTextNode("Loading models…")])
-    ]);
 
     const header = $("div", { class: "ct-header" }, [
       $("div", { class: "ct-title" }, [
@@ -356,45 +407,68 @@
         modelPill
       ]),
       $("div", { class: "ct-actions" }, [
-        $("button", { class: "ct-btn", type: "button", title: "Clear" , onClick: () => API.clear() }, [document.createTextNode("🧹")]),
-        $("button", { class: "ct-btn", type: "button", title: "Close" , onClick: () => API.close() }, [document.createTextNode("✖️")])
+        $("button", { class: "ct-btn", type: "button", title: "Connect", onClick: () => UI.showConnectModal() }, [document.createTextNode("🔑")]),
+        $("button", { class: "ct-btn", type: "button", title: "Refresh models", onClick: () => Actions.refreshModels() }, [document.createTextNode("↻")]),
+        $("button", { class: "ct-btn", type: "button", title: "Clear", onClick: () => API.clear() }, [document.createTextNode("🧹")]),
+        $("button", { class: "ct-btn", type: "button", title: "Close", onClick: () => API.close() }, [document.createTextNode("✖️")])
       ])
     ]);
 
-    const configRow = $("div", { class: "ct-config" }, [
-      $("div", { class: "ct-field" }, [
-        $("div", { class: "ct-label" }, [
-          document.createTextNode("API Endpoint"),
-          $("button", {
-            class: "ct-linkbtn",
-            type: "button",
-            title: "Token is kept in memory only",
-            onClick: () => addMessage("assistant", "Token is stored in memory only and disappears when the tab closes.")
-          }, [document.createTextNode("memory-only token")])
-        ]),
-        baseUrlInput
-      ]),
-      tokenBtn,
-      refreshModelsBtn
-    ]);
+    const body = $("div", { class: "ct-body" });
+    const textarea = $("textarea", { class: "ct-input", rows: "1", placeholder: "Type a message…" });
+    const sendBtn = $("button", { class: "ct-send", type: "button" }, [document.createTextNode("📨")]);
 
-    const modelRow = $("div", { class: "ct-config" }, [
-      $("div", { class: "ct-field" }, [
-        $("div", { class: "ct-label" }, [
-          document.createTextNode("Model"),
-          $("span", { class: "ct-mini" }, [statusPill])
-        ]),
-        modelSelect
-      ])
+    const modelSelect = $("select", { class: "ct-select" }, [
+      $("option", { value: "" }, [document.createTextNode("Connect to load models")])
     ]);
 
     const footer = $("div", { class: "ct-footer" }, [
-      configRow,
-      modelRow,
+      $("div", { class: "ct-config" }, [
+        $("div", { class: "ct-field" }, [
+          $("div", { class: "ct-label" }, [
+            document.createTextNode("Model"),
+            $("span", { class: "ct-mini" }, [statusPill])
+          ]),
+          modelSelect
+        ])
+      ]),
       $("div", { class: "ct-row" }, [textarea, sendBtn])
     ]);
 
-    panel.append(header, body, footer);
+    // Connect Modal (hidden by default)
+    const modal = $("div", { class: "ct-modal", "aria-hidden": "true" });
+    const tokenUrlInput = $("input", { class: "ct-text", type: "text", placeholder: CFG.api.tokenUrlPlaceholder });
+    const basicUserInput = $("input", { class: "ct-text", type: "text", placeholder: "Basic Auth username (optional)" });
+    const basicPassInput = $("input", { class: "ct-text", type: "password", placeholder: "Basic Auth password (optional)" });
+
+    const modalCard = $("div", { class: "ct-modal-card" }, [
+      $("div", { class: "ct-modal-head" }, [
+        $("div", { class: "ct-modal-title" }, [document.createTextNode("Connect")]),
+        $("button", { class: "ct-btn", type: "button", title: "Close", onClick: () => UI.hideConnectModal() }, [document.createTextNode("✖️")])
+      ]),
+      $("div", { class: "ct-modal-body" }, [
+        $("div", { class: "ct-field" }, [
+          $("div", { class: "ct-label" }, [
+            document.createTextNode("Token endpoint URL"),
+            $("span", { class: "ct-mini" }, [document.createTextNode("required")])
+          ]),
+          tokenUrlInput
+        ]),
+        $("div", { class: "ct-field" }, [
+          $("div", { class: "ct-label" }, [document.createTextNode("Basic Auth (optional)")]),
+          basicUserInput
+        ]),
+        basicPassInput,
+        $("div", { class: "ct-modal-actions" }, [
+          $("button", { class: "ct-btn", type: "button", onClick: () => UI.hideConnectModal() }, [document.createTextNode("Cancel")]),
+          $("button", { class: "ct-btn ct-primary", type: "button", onClick: () => Actions.connect() }, [document.createTextNode("Connect")])
+        ])
+      ])
+    ]);
+
+    modal.append(modalCard);
+
+    panel.append(header, body, footer, modal);
 
     const launcher = $("button", {
       class: "ct-launcher",
@@ -406,13 +480,21 @@
     root.append(launcher, panel);
     document.body.appendChild(root);
 
+    // Close on outside click
+    document.addEventListener("mousedown", (e) => {
+      if (!STATE.open) return;
+      if (root.contains(e.target)) return;
+      API.close();
+    });
+
     // ------------------------------------------------------------
     // STATE
     // ------------------------------------------------------------
     const STATE = {
       open: false,
-      token: null,           // in-memory only
-      baseUrl: normalizeBaseUrl(CFG.api.defaultBaseUrl || ""),
+      token: null,
+      tokenUrl: null,
+      basicAuth: null, // Authorization header value if provided
       models: [],
       selectedModel: CFG.ui.defaultModel || null,
       messages: [],
@@ -420,15 +502,21 @@
     };
 
     const setStatus = (txt) => { statusPill.textContent = txt; };
-    const setModelPill = (modelId) => { modelPill.textContent = modelId ? `model: ${modelId}` : "model: -"; };
+
+    const setModelPill = (modelId) => {
+      modelPill.textContent = modelId ? `model: ${modelId}` : "model: -";
+    };
+
     const scrollToBottom = () => { body.scrollTop = body.scrollHeight; };
+
+    const whoLabel = (role) => (role === "user" ? "you" : "papougai");
 
     const renderMsg = (m) => {
       const wrap = $("div", { class: `ct-msg ${m.role === "user" ? "ct-user" : "ct-bot"}` });
       const bubble = $("div", { class: "ct-bubble" });
       bubble.innerHTML = esc(m.content || "");
       const meta = $("div", { class: "ct-meta" }, [
-        document.createTextNode(`${m.role === "user" ? "you" : "assistant"} • ${new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)
+        document.createTextNode(`${whoLabel(m.role)} • ${new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`)
       ]);
       const stack = $("div", { style: "display:flex;flex-direction:column;gap:4px;max-width:84%;" }, [bubble, meta]);
       wrap.append(stack);
@@ -443,63 +531,83 @@
       return msg;
     };
 
-    const setBusy = (v) => {
-      STATE.busy = !!v;
-      sendBtn.disabled = STATE.busy;
-      tokenBtn.disabled = STATE.busy;
-      refreshModelsBtn.disabled = STATE.busy;
-      baseUrlInput.disabled = STATE.busy;
-      modelSelect.disabled = STATE.busy || !STATE.token;
-    };
-
     const system = (text) => addMessage("assistant", `⚠️ ${text}`);
 
-    // Close on outside click
-    document.addEventListener("mousedown", (e) => {
-      if (!STATE.open) return;
-      if (root.contains(e.target)) return;
-      API.close();
-    });
+    const setBusy = (v) => {
+      STATE.busy = !!v;
+      sendBtn.disabled = STATE.busy || !STATE.token;
+      modelSelect.disabled = STATE.busy || !STATE.token;
+      // header buttons: connect/refresh/clear/close remain enabled except during busy
+      header.querySelectorAll("button.ct-btn").forEach(btn => { btn.disabled = STATE.busy; });
+      // modal inputs
+      tokenUrlInput.disabled = STATE.busy;
+      basicUserInput.disabled = STATE.busy;
+      basicPassInput.disabled = STATE.busy;
+    };
 
     // ------------------------------------------------------------
-    // API client (token in memory only)
+    // UI controls
+    // ------------------------------------------------------------
+    const UI = {
+      showConnectModal: () => {
+        modal.classList.add("ct-show");
+        modal.setAttribute("aria-hidden", "false");
+        // Prefill last tokenUrl in memory if present
+        tokenUrlInput.value = STATE.tokenUrl || "";
+        tokenUrlInput.focus();
+      },
+      hideConnectModal: () => {
+        modal.classList.remove("ct-show");
+        modal.setAttribute("aria-hidden", "true");
+      }
+    };
+
+    // ------------------------------------------------------------
+    // API Client
     // ------------------------------------------------------------
     const ApiClient = (() => {
       const timeoutMs = CFG.api.requestTimeoutMs | 0;
-
-      const getBaseUrl = () => normalizeBaseUrl(STATE.baseUrl);
-      const tokenHeaderName = String(CFG.api.apiKeyHeader || "x-api-key");
-
-      const requireBaseUrl = () => {
-        const b = getBaseUrl();
-        if (!b) throw new Error("Missing API base URL.");
-        return b;
-      };
+      const baseUrl = normalizeBaseUrl(CFG.api.baseUrl);
+      const apiKeyHeaderName = String(CFG.api.apiKeyHeader || "x-api-key");
 
       const requireToken = () => {
-        if (!STATE.token) throw new Error("Not connected (missing token). Click 🔑 to fetch token.");
+        if (!STATE.token) throw new Error("Not connected.");
         return STATE.token;
       };
 
       const authHeaders = () => {
-        const tok = requireToken();
-        return { [tokenHeaderName]: tok };
+        const headers = { [apiKeyHeaderName]: requireToken() };
+        if (STATE.basicAuth) headers["authorization"] = STATE.basicAuth;
+        return headers;
       };
 
-      const fetchToken = async () => {
-        const base = requireBaseUrl();
-        const url = joinUrl(base, CFG.api.tokenPath);
-        const res = await abortableFetch(url, { method: "GET" }, timeoutMs);
-        const txt = await res.text().catch(() => "");
-        if (!res.ok) throw new Error(`Token request failed (${res.status}). ${txt || ""}`.trim());
+      const fetchToken = async (tokenUrl) => {
+        const url = normalizeUrl(tokenUrl);
+        if (!url) throw new Error("Missing token endpoint URL.");
 
-        let data;
-        try { data = txt ? JSON.parse(txt) : {}; } catch { data = { raw: txt }; }
+        const headers = {};
+        if (STATE.basicAuth) headers["authorization"] = STATE.basicAuth;
 
-        // Flexible parsing:
-        // accept {token:"..."} or {data:{token:"..."}} or plain string
+        const res = await abortableFetch(url, { method: "GET", headers }, timeoutMs);
+        if (!res.ok) {
+          const body = await readErrorBody(res);
+          throw new Error(`Token request failed (${res.status}). ${body}`.trim());
+        }
+
+        // Try JSON first, then text
+        const ct = res.headers.get("content-type") || "";
+        let data = null;
+
+        if (ct.includes("application/json")) {
+          data = await res.json().catch(() => null);
+        } else {
+          const t = await res.text().catch(() => "");
+          // Might be plain token string
+          data = t;
+        }
+
         const token =
-          (typeof data === "string" && data) ||
+          (typeof data === "string" && data.trim()) ||
           data?.token ||
           data?.data?.token ||
           data?.key ||
@@ -507,23 +615,24 @@
           (typeof data?.data === "string" ? data.data : null);
 
         if (!token) throw new Error("Token response did not contain a token field.");
-        return String(token);
+        return String(token).trim();
       };
 
       const listModels = async () => {
-        const base = requireBaseUrl();
-        const url = joinUrl(base, CFG.api.modelsPath);
+        const url = joinUrl(baseUrl, CFG.api.modelsPath);
         const res = await abortableFetch(url, { method: "GET", headers: { ...authHeaders() } }, timeoutMs);
+        if (!res.ok) {
+          const body = await readErrorBody(res);
+          throw new Error(`Model list failed (${res.status}). ${body}`.trim());
+        }
         const json = await res.json().catch(() => null);
-        if (!res.ok) throw new Error(`Model list failed (${res.status}).`);
         const arr = json?.data;
         if (!Array.isArray(arr)) throw new Error("Invalid models response (expected {data:[...]}).");
         return arr;
       };
 
       const infer = async (text, modelId) => {
-        const base = requireBaseUrl();
-        const url = joinUrl(base, CFG.api.inferPath);
+        const url = joinUrl(baseUrl, CFG.api.inferPath);
         const payload = { text: String(text || ""), model: String(modelId || "") };
 
         const res = await abortableFetch(url, {
@@ -532,19 +641,14 @@
           body: JSON.stringify(payload)
         }, timeoutMs);
 
-        const json = await res.json().catch(() => null);
         if (!res.ok) {
-          const msg = json?.error || json?.message || `Infer failed (${res.status}).`;
-          throw new Error(String(msg));
+          const body = await readErrorBody(res);
+          throw new Error(`Infer failed (${res.status}). ${body}`.trim());
         }
 
-        const content =
-          json?.choices?.[0]?.message?.content ??
-          json?.data?.choices?.[0]?.message?.content ??
-          json?.message?.content ??
-          null;
-
-        if (!content) throw new Error("Invalid infer response (missing assistant content).");
+        const json = await res.json().catch(() => null);
+        const content = json?.choices?.[0]?.message?.content ?? null;
+        if (!content) throw new Error("Invalid infer response (missing content).");
         return String(content);
       };
 
@@ -556,6 +660,15 @@
     // ------------------------------------------------------------
     const rebuildModelSelect = () => {
       modelSelect.innerHTML = "";
+
+      if (!STATE.token) {
+        modelSelect.append($("option", { value: "" }, [document.createTextNode("Connect to load models")]));
+        modelSelect.value = "";
+        setModelPill(null);
+        STATE.selectedModel = null;
+        return;
+      }
+
       if (!STATE.models.length) {
         modelSelect.append($("option", { value: "" }, [document.createTextNode("No models")]));
         modelSelect.value = "";
@@ -568,8 +681,7 @@
       for (const m of STATE.models) {
         const id = String(m?.id || "");
         const name = String(m?.model_spec?.name || id || "model");
-        const opt = $("option", { value: id }, [document.createTextNode(`${name} (${id})`)]);
-        modelSelect.append(opt);
+        modelSelect.append($("option", { value: id }, [document.createTextNode(`${name} (${id})`)]));
       }
 
       const firstId = String(STATE.models[0]?.id || "");
@@ -582,59 +694,106 @@
       setModelPill(chosen);
     };
 
-    const connectAndLoadModels = async () => {
-      STATE.baseUrl = normalizeBaseUrl(baseUrlInput.value);
-      if (!STATE.baseUrl) {
-        system("Please provide an API base URL.");
-        return;
-      }
+    // ------------------------------------------------------------
+    // Actions
+    // ------------------------------------------------------------
+    const Actions = {
+      connect: async () => {
+        const tokenUrl = normalizeUrl(tokenUrlInput.value);
+        if (!tokenUrl) {
+          system("Token endpoint URL is required.");
+          return;
+        }
 
-      setBusy(true);
-      setStatus("connecting…");
-      try {
-        const tok = await ApiClient.fetchToken();
-        STATE.token = tok;
-        setStatus("token ok");
+        STATE.tokenUrl = tokenUrl;
+        STATE.basicAuth = basicAuthHeader(basicUserInput.value, basicPassInput.value);
 
-        const models = await ApiClient.listModels();
-        STATE.models = models;
+        setBusy(true);
+        setStatus("connecting…");
 
-        rebuildModelSelect();
-        setStatus("ready");
-        addMessage("assistant", "Connected. Models loaded.");
-      } catch (e) {
-        STATE.token = null;
-        STATE.models = [];
-        rebuildModelSelect();
-        setStatus("unavailable");
-        system(String(e?.message || e));
-      } finally {
-        setBusy(false);
-      }
-    };
+        try {
+          const tok = await ApiClient.fetchToken(tokenUrl);
+          STATE.token = tok;
 
-    const refreshModels = async () => {
-      if (!STATE.token) {
-        system("Not connected. Click 🔑 first.");
-        return;
-      }
-      setBusy(true);
-      setStatus("loading models…");
-      try {
-        const models = await ApiClient.listModels();
-        STATE.models = models;
-        rebuildModelSelect();
-        setStatus("ready");
-      } catch (e) {
-        setStatus("unavailable");
-        system(String(e?.message || e));
-      } finally {
-        setBusy(false);
+          const models = await ApiClient.listModels();
+          STATE.models = models;
+
+          rebuildModelSelect();
+          setStatus("ready");
+          UI.hideConnectModal();
+
+          // Minimal non-technical confirmation
+          addMessage("assistant", "Connected. You can chat now.");
+        } catch (e) {
+          STATE.token = null;
+          STATE.models = [];
+          rebuildModelSelect();
+          setStatus("unavailable");
+
+          // If this is CORS, message will often be generic; provide a hint without jargon.
+          const msg = String(e?.message || e);
+          system(msg || "Connection failed.");
+        } finally {
+          setBusy(false);
+        }
+      },
+
+      refreshModels: async () => {
+        if (!STATE.token) {
+          UI.showConnectModal();
+          return;
+        }
+        setBusy(true);
+        setStatus("loading…");
+        try {
+          const models = await ApiClient.listModels();
+          STATE.models = models;
+          rebuildModelSelect();
+          setStatus("ready");
+        } catch (e) {
+          setStatus("unavailable");
+          system(String(e?.message || e));
+        } finally {
+          setBusy(false);
+        }
+      },
+
+      send: async () => {
+        const v = (textarea.value || "").trim();
+        if (!v) return;
+
+        if (!STATE.token) {
+          UI.showConnectModal();
+          return;
+        }
+
+        const model = modelSelect.value || STATE.selectedModel;
+        if (!model) {
+          system("No model selected.");
+          return;
+        }
+
+        textarea.value = "";
+        autoResize();
+        addMessage("user", v);
+
+        setBusy(true);
+        setStatus("thinking…");
+        try {
+          const out = await ApiClient.infer(v, model);
+          addMessage("assistant", out);
+          setStatus("ready");
+        } catch (e) {
+          setStatus("ready");
+          system(String(e?.message || e));
+        } finally {
+          setBusy(false);
+        }
       }
     };
 
     // ------------------------------------------------------------
-    // INPUT
+    // Input behavior
     // ------------------------------------------------------------
     const autoResize = () => {
       textarea.style.height = "0px";
@@ -652,63 +811,20 @@
       if (e.key === "Escape") API.close();
     });
 
-    const send = async () => {
-      const v = (textarea.value || "").trim();
-      if (!v) return;
-
-      if (!STATE.token) {
-        system("Not connected. Set API base URL, then click 🔑.");
-        return;
-      }
-      const model = modelSelect.value || STATE.selectedModel;
-      if (!model) {
-        system("No model selected.");
-        return;
-      }
-
-      textarea.value = "";
-      autoResize();
-      addMessage("user", v);
-
-      setBusy(true);
-      setStatus("thinking…");
-      try {
-        const out = await ApiClient.infer(v, model);
-        addMessage("assistant", out);
-        setStatus("ready");
-      } catch (e) {
-        setStatus("ready");
-        system(String(e?.message || e));
-      } finally {
-        setBusy(false);
-      }
-    };
-
-    sendBtn.addEventListener("click", send);
-
-    tokenBtn.addEventListener("click", connectAndLoadModels);
-    refreshModelsBtn.addEventListener("click", refreshModels);
+    sendBtn.addEventListener("click", () => Actions.send());
 
     modelSelect.addEventListener("change", () => {
       STATE.selectedModel = modelSelect.value || null;
       setModelPill(STATE.selectedModel);
     });
 
-    baseUrlInput.addEventListener("change", () => {
-      // changing base url invalidates token + models
-      const next = normalizeBaseUrl(baseUrlInput.value);
-      if (next !== STATE.baseUrl) {
-        STATE.baseUrl = next;
-        STATE.token = null;
-        STATE.models = [];
-        STATE.selectedModel = null;
-        rebuildModelSelect();
-        setStatus("unconfigured");
-      }
+    // Modal: click outside card closes
+    modal.addEventListener("mousedown", (e) => {
+      if (e.target === modal) UI.hideConnectModal();
     });
 
     // ------------------------------------------------------------
-    // PUBLIC API
+    // Public API
     // ------------------------------------------------------------
     const API = {
       open: () => {
@@ -720,6 +836,7 @@
       close: () => {
         STATE.open = false;
         panel.classList.remove("ct-open");
+        UI.hideConnectModal();
       },
       toggle: () => (STATE.open ? API.close() : API.open()),
       clear: () => {
@@ -727,18 +844,20 @@
         body.innerHTML = "";
         addMessage("assistant", "Chat cleared.");
       },
-      // Optional helpers for host page:
-      isConnected: () => !!STATE.token,
-      getSelectedModel: () => STATE.selectedModel,
       disconnect: () => {
-        // memory-only token: clear in-memory state
+        // clears token + models in memory only
         STATE.token = null;
         STATE.models = [];
         STATE.selectedModel = null;
         rebuildModelSelect();
-        setStatus("unconfigured");
-        addMessage("assistant", "Disconnected (token cleared).");
-      }
+        setStatus("disconnected");
+        setModelPill(null);
+      },
+      getState: () => ({
+        connected: !!STATE.token,
+        model: STATE.selectedModel,
+        baseUrl: normalizeBaseUrl(CFG.api.baseUrl)
+      })
     };
 
     window.CTChat = API;
@@ -746,8 +865,8 @@
     // ------------------------------------------------------------
     // Boot
     // ------------------------------------------------------------
-    addMessage("assistant", "Ready. Set API base URL, click 🔑, select model, then chat.");
-    setStatus("unconfigured");
+    addMessage("assistant", "Ready.");
+    setStatus("disconnected");
     rebuildModelSelect();
     autoResize();
 
