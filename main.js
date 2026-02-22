@@ -4,9 +4,12 @@
   try {
     // ------------------------------------------------------------
     // Changtan Embed (No WS)
-    // Fixed base URL + user-provided token endpoint (hidden after connect)
-    // Models: GET /getAvailableTextModels with x-api-key
-    // Infer: POST /inferChatWithoutStream with x-api-key
+    // Fixed API base URL
+    // User enters token once in a hidden modal (password field)
+    // Token kept in memory only
+    //
+    // Models: GET  {baseUrl}/getAvailableTextModels   header: x-api-key: <token>
+    // Infer:  POST {baseUrl}/inferChatWithoutStream   header: x-api-key: <token>
     // ------------------------------------------------------------
 
     const DEFAULTS = {
@@ -26,22 +29,15 @@
         border: "rgba(255,255,255,0.12)",
         shadow: "0 16px 48px rgba(0,0,0,0.45)"
       },
-
       api: {
-        // FIXED (not editable in UI)
         baseUrl: "https://mpanatitra.kahiether.com",
-
-        // user provides this FULL token URL in a hidden modal (not stored persistently)
-        tokenUrlPlaceholder: "https://your-domain.com/getToken",
-
         modelsPath: "/getAvailableTextModels",
         inferPath: "/inferChatWithoutStream",
         apiKeyHeader: "x-api-key",
         requestTimeoutMs: 25000
       },
-
       ui: {
-        defaultModel: null // if null => first model
+        defaultModel: null
       }
     };
 
@@ -61,7 +57,6 @@
 
     const CFG = deepMerge(DEFAULTS, window.CTChatConfig || {});
 
-    // Prevent double injection
     if (window.__CHANGTAN_EMBED__) return;
     window.__CHANGTAN_EMBED__ = true;
 
@@ -88,14 +83,7 @@
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
 
-    const normalizeUrl = (u) => String(u || "").trim().replace(/\s+/g, "");
-
-    const normalizeBaseUrl = (u) => {
-      let s = normalizeUrl(u);
-      s = s.replace(/\/+$/, "");
-      return s;
-    };
-
+    const normalizeBaseUrl = (u) => String(u || "").trim().replace(/\/+$/, "");
     const joinUrl = (base, path) => {
       const b = normalizeBaseUrl(base);
       const p = String(path || "");
@@ -105,21 +93,10 @@
       return b + "/" + p;
     };
 
-    const basicAuthHeader = (user, pass) => {
-      const u = String(user || "");
-      const p = String(pass || "");
-      if (!u && !p) return null;
-      // btoa expects Latin1; for safety, encodeURIComponent trick
-      const raw = `${u}:${p}`;
-      const b64 = btoa(unescape(encodeURIComponent(raw)));
-      return `Basic ${b64}`;
-    };
-
     const abortableFetch = async (url, opts = {}, timeoutMs = 25000) => {
       const controller = new AbortController();
       const t = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs | 0));
       try {
-        // Important: in browser, CORS applies. Postman does not.
         return await fetch(url, {
           mode: "cors",
           credentials: "omit",
@@ -140,8 +117,7 @@
           const j = await res.json();
           return j?.error || j?.message || JSON.stringify(j);
         }
-        const t = await res.text();
-        return t || "";
+        return (await res.text()) || "";
       } catch {
         return "";
       }
@@ -253,7 +229,6 @@
       }
       [data-changtan="1"] .ct-title{ display:flex;align-items:center;gap:10px; min-width:0; }
       [data-changtan="1"] .ct-name{ font-size:14px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-
       [data-changtan="1"] .ct-pill{
         padding:5px 10px;border-radius:999px;border:1px solid var(--ct-border);
         background: rgba(255,255,255,0.03);
@@ -347,7 +322,7 @@
       }
       [data-changtan="1"] .ct-send:disabled{ opacity:0.5; cursor:not-allowed; }
 
-      /* Modal (hidden by default) */
+      /* Modal */
       [data-changtan="1"] .ct-modal{
         position:absolute;
         inset: 0;
@@ -401,25 +376,25 @@
     const statusPill = $("span", { class: "ct-pill", "data-ct-status": "1" }, [document.createTextNode("disconnected")]);
     const modelPill = $("span", { class: "ct-pill", "data-ct-model": "1" }, [document.createTextNode("model: -")]);
 
-    const header = $("div", { class: "ct-header" }, [
-      $("div", { class: "ct-title" }, [
-        $("div", { class: "ct-name" }, [document.createTextNode(`${CFG.launcherEmoji} ${CFG.title}`)]),
-        modelPill
-      ]),
-      $("div", { class: "ct-actions" }, [
-        $("button", { class: "ct-btn", type: "button", title: "Connect", onClick: () => UI.showConnectModal() }, [document.createTextNode("🔑")]),
-        $("button", { class: "ct-btn", type: "button", title: "Refresh models", onClick: () => Actions.refreshModels() }, [document.createTextNode("↻")]),
-        $("button", { class: "ct-btn", type: "button", title: "Clear", onClick: () => API.clear() }, [document.createTextNode("🧹")]),
-        $("button", { class: "ct-btn", type: "button", title: "Close", onClick: () => API.close() }, [document.createTextNode("✖️")])
-      ])
-    ]);
-
     const body = $("div", { class: "ct-body" });
     const textarea = $("textarea", { class: "ct-input", rows: "1", placeholder: "Type a message…" });
     const sendBtn = $("button", { class: "ct-send", type: "button" }, [document.createTextNode("📨")]);
 
     const modelSelect = $("select", { class: "ct-select" }, [
       $("option", { value: "" }, [document.createTextNode("Connect to load models")])
+    ]);
+
+    const header = $("div", { class: "ct-header" }, [
+      $("div", { class: "ct-title" }, [
+        $("div", { class: "ct-name" }, [document.createTextNode(`${CFG.launcherEmoji} ${CFG.title}`)]),
+        modelPill
+      ]),
+      $("div", { class: "ct-actions" }, [
+        $("button", { class: "ct-btn", type: "button", title: "Connect", onClick: () => UI.showTokenModal() }, [document.createTextNode("🔑")]),
+        $("button", { class: "ct-btn", type: "button", title: "Refresh models", onClick: () => Actions.refreshModels() }, [document.createTextNode("↻")]),
+        $("button", { class: "ct-btn", type: "button", title: "Clear", onClick: () => API.clear() }, [document.createTextNode("🧹")]),
+        $("button", { class: "ct-btn", type: "button", title: "Close", onClick: () => API.close() }, [document.createTextNode("✖️")])
+      ])
     ]);
 
     const footer = $("div", { class: "ct-footer" }, [
@@ -435,39 +410,35 @@
       $("div", { class: "ct-row" }, [textarea, sendBtn])
     ]);
 
-    // Connect Modal (hidden by default)
+    // Token modal (password field)
     const modal = $("div", { class: "ct-modal", "aria-hidden": "true" });
-    const tokenUrlInput = $("input", { class: "ct-text", type: "text", placeholder: CFG.api.tokenUrlPlaceholder });
-    const basicUserInput = $("input", { class: "ct-text", type: "text", placeholder: "Basic Auth username (optional)" });
-    const basicPassInput = $("input", { class: "ct-text", type: "password", placeholder: "Basic Auth password (optional)" });
+    const tokenInput = $("input", {
+      class: "ct-text",
+      type: "password",
+      placeholder: "Token"
+    });
 
     const modalCard = $("div", { class: "ct-modal-card" }, [
       $("div", { class: "ct-modal-head" }, [
         $("div", { class: "ct-modal-title" }, [document.createTextNode("Connect")]),
-        $("button", { class: "ct-btn", type: "button", title: "Close", onClick: () => UI.hideConnectModal() }, [document.createTextNode("✖️")])
+        $("button", { class: "ct-btn", type: "button", title: "Close", onClick: () => UI.hideTokenModal() }, [document.createTextNode("✖️")])
       ]),
       $("div", { class: "ct-modal-body" }, [
         $("div", { class: "ct-field" }, [
           $("div", { class: "ct-label" }, [
-            document.createTextNode("Token endpoint URL"),
+            document.createTextNode("API token"),
             $("span", { class: "ct-mini" }, [document.createTextNode("required")])
           ]),
-          tokenUrlInput
+          tokenInput
         ]),
-        $("div", { class: "ct-field" }, [
-          $("div", { class: "ct-label" }, [document.createTextNode("Basic Auth (optional)")]),
-          basicUserInput
-        ]),
-        basicPassInput,
         $("div", { class: "ct-modal-actions" }, [
-          $("button", { class: "ct-btn", type: "button", onClick: () => UI.hideConnectModal() }, [document.createTextNode("Cancel")]),
-          $("button", { class: "ct-btn ct-primary", type: "button", onClick: () => Actions.connect() }, [document.createTextNode("Connect")])
+          $("button", { class: "ct-btn", type: "button", onClick: () => UI.hideTokenModal() }, [document.createTextNode("Cancel")]),
+          $("button", { class: "ct-btn ct-primary", type: "button", onClick: () => Actions.connectWithToken() }, [document.createTextNode("Connect")])
         ])
       ])
     ]);
 
     modal.append(modalCard);
-
     panel.append(header, body, footer, modal);
 
     const launcher = $("button", {
@@ -492,9 +463,7 @@
     // ------------------------------------------------------------
     const STATE = {
       open: false,
-      token: null,
-      tokenUrl: null,
-      basicAuth: null, // Authorization header value if provided
+      token: null, // memory only
       models: [],
       selectedModel: CFG.ui.defaultModel || null,
       messages: [],
@@ -502,11 +471,7 @@
     };
 
     const setStatus = (txt) => { statusPill.textContent = txt; };
-
-    const setModelPill = (modelId) => {
-      modelPill.textContent = modelId ? `model: ${modelId}` : "model: -";
-    };
-
+    const setModelPill = (modelId) => { modelPill.textContent = modelId ? `model: ${modelId}` : "model: -"; };
     const scrollToBottom = () => { body.scrollTop = body.scrollHeight; };
 
     const whoLabel = (role) => (role === "user" ? "you" : "papougai");
@@ -537,33 +502,36 @@
       STATE.busy = !!v;
       sendBtn.disabled = STATE.busy || !STATE.token;
       modelSelect.disabled = STATE.busy || !STATE.token;
-      // header buttons: connect/refresh/clear/close remain enabled except during busy
-      header.querySelectorAll("button.ct-btn").forEach(btn => { btn.disabled = STATE.busy; });
-      // modal inputs
-      tokenUrlInput.disabled = STATE.busy;
-      basicUserInput.disabled = STATE.busy;
-      basicPassInput.disabled = STATE.busy;
+      tokenInput.disabled = STATE.busy;
+
+      header.querySelectorAll("button.ct-btn").forEach((btn) => {
+        btn.disabled = STATE.busy;
+      });
     };
 
     // ------------------------------------------------------------
     // UI controls
     // ------------------------------------------------------------
     const UI = {
-      showConnectModal: () => {
+      showTokenModal: () => {
         modal.classList.add("ct-show");
         modal.setAttribute("aria-hidden", "false");
-        // Prefill last tokenUrl in memory if present
-        tokenUrlInput.value = STATE.tokenUrl || "";
-        tokenUrlInput.focus();
+        tokenInput.value = "";
+        tokenInput.focus();
       },
-      hideConnectModal: () => {
+      hideTokenModal: () => {
         modal.classList.remove("ct-show");
         modal.setAttribute("aria-hidden", "true");
       }
     };
 
+    // Modal: click outside card closes
+    modal.addEventListener("mousedown", (e) => {
+      if (e.target === modal) UI.hideTokenModal();
+    });
+
     // ------------------------------------------------------------
-    // API Client
+    // API client
     // ------------------------------------------------------------
     const ApiClient = (() => {
       const timeoutMs = CFG.api.requestTimeoutMs | 0;
@@ -575,48 +543,7 @@
         return STATE.token;
       };
 
-      const authHeaders = () => {
-        const headers = { [apiKeyHeaderName]: requireToken() };
-        if (STATE.basicAuth) headers["authorization"] = STATE.basicAuth;
-        return headers;
-      };
-
-      const fetchToken = async (tokenUrl) => {
-        const url = normalizeUrl(tokenUrl);
-        if (!url) throw new Error("Missing token endpoint URL.");
-
-        const headers = {};
-        if (STATE.basicAuth) headers["authorization"] = STATE.basicAuth;
-
-        const res = await abortableFetch(url, { method: "GET", headers }, timeoutMs);
-        if (!res.ok) {
-          const body = await readErrorBody(res);
-          throw new Error(`Token request failed (${res.status}). ${body}`.trim());
-        }
-
-        // Try JSON first, then text
-        const ct = res.headers.get("content-type") || "";
-        let data = null;
-
-        if (ct.includes("application/json")) {
-          data = await res.json().catch(() => null);
-        } else {
-          const t = await res.text().catch(() => "");
-          // Might be plain token string
-          data = t;
-        }
-
-        const token =
-          (typeof data === "string" && data.trim()) ||
-          data?.token ||
-          data?.data?.token ||
-          data?.key ||
-          data?.data?.key ||
-          (typeof data?.data === "string" ? data.data : null);
-
-        if (!token) throw new Error("Token response did not contain a token field.");
-        return String(token).trim();
-      };
+      const authHeaders = () => ({ [apiKeyHeaderName]: requireToken() });
 
       const listModels = async () => {
         const url = joinUrl(baseUrl, CFG.api.modelsPath);
@@ -652,7 +579,7 @@
         return String(content);
       };
 
-      return { fetchToken, listModels, infer };
+      return { listModels, infer };
     })();
 
     // ------------------------------------------------------------
@@ -664,16 +591,16 @@
       if (!STATE.token) {
         modelSelect.append($("option", { value: "" }, [document.createTextNode("Connect to load models")]));
         modelSelect.value = "";
-        setModelPill(null);
         STATE.selectedModel = null;
+        setModelPill(null);
         return;
       }
 
       if (!STATE.models.length) {
         modelSelect.append($("option", { value: "" }, [document.createTextNode("No models")]));
         modelSelect.value = "";
-        setModelPill(null);
         STATE.selectedModel = null;
+        setModelPill(null);
         return;
       }
 
@@ -685,9 +612,10 @@
       }
 
       const firstId = String(STATE.models[0]?.id || "");
-      const chosen = (preferred && STATE.models.some(x => String(x?.id) === String(preferred)))
-        ? String(preferred)
-        : firstId;
+      const chosen =
+        preferred && STATE.models.some((x) => String(x?.id) === String(preferred))
+          ? String(preferred)
+          : firstId;
 
       modelSelect.value = chosen;
       STATE.selectedModel = chosen;
@@ -698,21 +626,17 @@
     // Actions
     // ------------------------------------------------------------
     const Actions = {
-      connect: async () => {
-        const tokenUrl = normalizeUrl(tokenUrlInput.value);
-        if (!tokenUrl) {
-          system("Token endpoint URL is required.");
+      connectWithToken: async () => {
+        const tok = String(tokenInput.value || "").trim();
+        if (!tok) {
+          system("Token is required.");
           return;
         }
-
-        STATE.tokenUrl = tokenUrl;
-        STATE.basicAuth = basicAuthHeader(basicUserInput.value, basicPassInput.value);
 
         setBusy(true);
         setStatus("connecting…");
 
         try {
-          const tok = await ApiClient.fetchToken(tokenUrl);
           STATE.token = tok;
 
           const models = await ApiClient.listModels();
@@ -720,19 +644,15 @@
 
           rebuildModelSelect();
           setStatus("ready");
-          UI.hideConnectModal();
+          UI.hideTokenModal();
 
-          // Minimal non-technical confirmation
-          addMessage("assistant", "Connected. You can chat now.");
+          addMessage("assistant", "Connected.");
         } catch (e) {
           STATE.token = null;
           STATE.models = [];
           rebuildModelSelect();
           setStatus("unavailable");
-
-          // If this is CORS, message will often be generic; provide a hint without jargon.
-          const msg = String(e?.message || e);
-          system(msg || "Connection failed.");
+          system(String(e?.message || e));
         } finally {
           setBusy(false);
         }
@@ -740,7 +660,7 @@
 
       refreshModels: async () => {
         if (!STATE.token) {
-          UI.showConnectModal();
+          UI.showTokenModal();
           return;
         }
         setBusy(true);
@@ -763,7 +683,7 @@
         if (!v) return;
 
         if (!STATE.token) {
-          UI.showConnectModal();
+          UI.showTokenModal();
           return;
         }
 
@@ -818,11 +738,6 @@
       setModelPill(STATE.selectedModel);
     });
 
-    // Modal: click outside card closes
-    modal.addEventListener("mousedown", (e) => {
-      if (e.target === modal) UI.hideConnectModal();
-    });
-
     // ------------------------------------------------------------
     // Public API
     // ------------------------------------------------------------
@@ -836,7 +751,7 @@
       close: () => {
         STATE.open = false;
         panel.classList.remove("ct-open");
-        UI.hideConnectModal();
+        UI.hideTokenModal();
       },
       toggle: () => (STATE.open ? API.close() : API.open()),
       clear: () => {
@@ -845,7 +760,6 @@
         addMessage("assistant", "Chat cleared.");
       },
       disconnect: () => {
-        // clears token + models in memory only
         STATE.token = null;
         STATE.models = [];
         STATE.selectedModel = null;
@@ -869,6 +783,7 @@
     setStatus("disconnected");
     rebuildModelSelect();
     autoResize();
+    sendBtn.disabled = true;
 
   } catch (e) {
     console.warn("[CHANGTAN] Fatal boot error:", e);
