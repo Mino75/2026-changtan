@@ -3,10 +3,11 @@
 
   try {
     // ------------------------------------------------------------
-    // CONFIG (host sets window.CTChatConfig before loading, optional)
+    // Changtan Embed (No WS). Simple API (token -> list models -> infer)
+    // Token is stored in-memory only (lost on page close).
     // ------------------------------------------------------------
+
     const DEFAULTS = {
-      wsEndpoints: [],              // REQUIRED: array of websocket URLs
       title: "Changtan",
       launcherEmoji: "🦜",
       modeLabel: "Chat",
@@ -23,40 +24,55 @@
         border: "rgba(255,255,255,0.12)",
         shadow: "0 16px 48px rgba(0,0,0,0.45)"
       },
-      // Optional: external session id if you have one
-      conversationId: null,
-      // Optional: identify host product/tenant
-      client: { name: "embed", version: "1.0.0" }
+
+      // API config:
+      // - user provides baseUrl in UI (not known by front at build time)
+      // - token endpoint name is configurable (default: /getToken)
+      api: {
+        defaultBaseUrl: "https://mpanatitra.kahiether.com",
+        tokenPath: "/getToken", // <-- adjust if your token endpoint differs
+        modelsPath: "/getAvailableTextModels",
+        inferPath: "/inferChatWithoutStream",
+        apiKeyHeader: "x-api-key",
+        requestTimeoutMs: 25000
+      },
+
+      // UI defaults
+      ui: {
+        defaultModel: null, // if null => choose first returned model
+        showModelPicker: true
+      }
     };
 
     const deepMerge = (a, b) => {
       const out = { ...(a || {}) };
       for (const k in (b || {})) {
         const av = out[k], bv = b[k];
-        if (av && bv && typeof av === "object" && typeof bv === "object" && !Array.isArray(av) && !Array.isArray(bv)) {
-          out[k] = deepMerge(av, bv);
-        } else out[k] = bv;
+        if (
+          av && bv &&
+          typeof av === "object" && typeof bv === "object" &&
+          !Array.isArray(av) && !Array.isArray(bv)
+        ) out[k] = deepMerge(av, bv);
+        else out[k] = bv;
       }
       return out;
     };
 
     const CFG = deepMerge(DEFAULTS, window.CTChatConfig || {});
-    if (!Array.isArray(CFG.wsEndpoints)) CFG.wsEndpoints = [];
-    CFG.wsEndpoints = CFG.wsEndpoints.filter(Boolean);
 
     // Prevent double injection
     if (window.__CHANGTAN_EMBED__) return;
     window.__CHANGTAN_EMBED__ = true;
 
     // ------------------------------------------------------------
-    // DOM
+    // DOM helpers
     // ------------------------------------------------------------
     const $ = (tag, attrs = {}, children = []) => {
       const n = document.createElement(tag);
       for (const [k, v] of Object.entries(attrs)) {
         if (k === "class") n.className = v;
         else if (k === "style") n.setAttribute("style", v);
-        else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
+        else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2).toLowerCase(), v);
         else if (v !== undefined && v !== null) n.setAttribute(k, String(v));
       }
       for (const c of children) n.append(c);
@@ -71,6 +87,36 @@
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
 
+    const normalizeBaseUrl = (u) => {
+      let s = String(u || "").trim();
+      if (!s) return "";
+      s = s.replace(/\/+$/, "");
+      return s;
+    };
+
+    const joinUrl = (base, path) => {
+      const b = normalizeBaseUrl(base);
+      const p = String(path || "");
+      if (!b) return "";
+      if (!p) return b;
+      if (p.startsWith("/")) return b + p;
+      return b + "/" + p;
+    };
+
+    const abortableFetch = async (url, opts = {}, timeoutMs = 25000) => {
+      const controller = new AbortController();
+      const t = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs | 0));
+      try {
+        const res = await fetch(url, { ...opts, signal: controller.signal });
+        return res;
+      } finally {
+        clearTimeout(t);
+      }
+    };
+
+    // ------------------------------------------------------------
+    // Styles (hardened)
+    // ------------------------------------------------------------
     const THEME = CFG.theme;
 
     const CSS = `
@@ -87,30 +133,42 @@
         --ct-font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
       }
 
-      .ct-root{ position:fixed; left:${CFG.offset}px; bottom:${CFG.offset}px; z-index:${CFG.zIndex}; font-family:var(--ct-font); }
-      .ct-launcher{
-        width:56px;height:56px;border-radius:999px;border:1px solid var(--ct-border);
+      [data-changtan="1"].ct-root{
+        position:fixed;
+        left:${CFG.offset}px;
+        bottom:${CFG.offset}px;
+        z-index:${CFG.zIndex};
+        font-family:var(--ct-font);
+        pointer-events:auto;
+      }
+
+      [data-changtan="1"] .ct-launcher{
+        all: unset;
+        box-sizing: border-box;
+        width:56px;height:56px;border-radius:999px;
+        border:1px solid var(--ct-border);
         background: radial-gradient(120% 120% at 20% 10%, rgba(47,107,255,0.18) 0%, rgba(255,255,255,0.03) 70%);
         box-shadow:var(--ct-shadow);
         display:flex;align-items:center;justify-content:center;
         cursor:pointer;user-select:none;
+        pointer-events:auto;
+
         font-family: var(--ct-font);
-        font-size: 40px;
+        font-size: 26px;
         line-height: 1;
         padding: 0;
         margin: 0;
-        border: 1px solid var(--ct-border);
-        appearance: none;
         -webkit-appearance: none;
+        appearance: none;
         font-variant-emoji: emoji;
+
         transition: transform .12s ease, filter .12s ease, background .12s ease, box-shadow .12s ease;
         -webkit-tap-highlight-color: transparent;
         touch-action: manipulation;
       }
 
-      /* Hover (*/
       @media (hover:hover) and (pointer:fine){
-        .ct-launcher:hover{
+        [data-changtan="1"] .ct-launcher:hover{
           background: radial-gradient(120% 120% at 20% 10%,
             rgba(47,107,255,0.28) 0%,
             rgba(255,255,255,0.06) 70%);
@@ -118,20 +176,18 @@
           transform: translateY(-1px);
         }
       }
-      
-      /* Click / press feedback */
-      .ct-launcher:active{
+
+      [data-changtan="1"] .ct-launcher:active{
         transform: translateY(0px) scale(0.98);
         filter: brightness(0.98);
       }
-      
-      /* Keyboard accessibility */
-      .ct-launcher:focus-visible{
+
+      [data-changtan="1"] .ct-launcher:focus-visible{
         outline: 2px solid rgba(47,107,255,0.75);
         outline-offset: 3px;
       }
-      
-      .ct-panel{
+
+      [data-changtan="1"] .ct-panel{
         position:absolute;left:0;bottom:70px;
         width:${CFG.width}px;height:${CFG.height}px;
         border-radius:var(--ct-radius);
@@ -146,40 +202,47 @@
         transition: transform .18s ease, opacity .18s ease;
         backdrop-filter: blur(10px);
       }
-      .ct-panel.ct-open{ transform:scale(1);opacity:1;pointer-events:auto; }
 
-      .ct-header{
+      [data-changtan="1"] .ct-panel.ct-open{
+        transform:scale(1) !important;
+        opacity:1 !important;
+        pointer-events:auto !important;
+        display:block !important;
+        visibility:visible !important;
+      }
+
+      [data-changtan="1"] .ct-header{
         height:56px;display:flex;align-items:center;justify-content:space-between;
         padding:0 12px 0 14px;
         background: linear-gradient(180deg, rgba(17,24,39,0.9), rgba(15,23,42,0.7));
         border-bottom:1px solid var(--ct-border);
         color:var(--ct-text);
       }
-      .ct-title{ display:flex;align-items:center;gap:10px; min-width:0; }
-      .ct-name{ font-size:14px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
-      .ct-pill{
+      [data-changtan="1"] .ct-title{ display:flex;align-items:center;gap:10px; min-width:0; }
+      [data-changtan="1"] .ct-name{ font-size:14px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+      [data-changtan="1"] .ct-pill{
         padding:5px 10px;border-radius:999px;border:1px solid var(--ct-border);
         background: rgba(255,255,255,0.03);
         color:var(--ct-muted);
         font-size:11px;
       }
-      .ct-actions{ display:flex;gap:8px; }
-      .ct-btn{
+      [data-changtan="1"] .ct-actions{ display:flex;gap:8px; }
+      [data-changtan="1"] .ct-btn{
         width:34px;height:34px;border-radius:10px;border:1px solid var(--ct-border);
         background: rgba(255,255,255,0.03);
         color:var(--ct-text);cursor:pointer;user-select:none;
         display:flex;align-items:center;justify-content:center;
       }
-      .ct-btn:hover{ background: rgba(255,255,255,0.06); }
+      [data-changtan="1"] .ct-btn:hover{ background: rgba(255,255,255,0.06); }
 
-      .ct-body{
-        height: calc(100% - 56px - 84px);
+      [data-changtan="1"] .ct-body{
+        height: calc(100% - 56px - 110px);
         overflow:auto;
         padding: 14px 12px 18px 12px;
       }
-      .ct-msg{ display:flex;gap:10px;margin:10px 0;align-items:flex-end; }
-      .ct-msg.ct-user{ justify-content:flex-end; }
-      .ct-bubble{
+      [data-changtan="1"] .ct-msg{ display:flex;gap:10px;margin:10px 0;align-items:flex-end; }
+      [data-changtan="1"] .ct-msg.ct-user{ justify-content:flex-end; }
+      [data-changtan="1"] .ct-bubble{
         max-width:84%;
         padding:10px 12px;border-radius:var(--ct-radius2);
         border:1px solid var(--ct-border);
@@ -188,28 +251,57 @@
         white-space: pre-wrap; word-break: break-word;
         background: rgba(255,255,255,0.06);
       }
-      .ct-user .ct-bubble{
+      [data-changtan="1"] .ct-user .ct-bubble{
         background: rgba(47,107,255,0.18);
         border-color: rgba(47,107,255,0.28);
       }
-      .ct-meta{ font-size:10.5px;color:var(--ct-muted);margin-top:6px; }
+      [data-changtan="1"] .ct-meta{ font-size:10.5px;color:var(--ct-muted);margin-top:6px; }
 
-      .ct-footer{
-        height:84px;display:flex;flex-direction:column;gap:8px;
+      [data-changtan="1"] .ct-footer{
+        height:110px;display:flex;flex-direction:column;gap:8px;
         padding:10px 12px;
         border-top:1px solid var(--ct-border);
         background: rgba(0,0,0,0.10);
       }
-      .ct-row{ display:flex;gap:8px;align-items:flex-end; }
-      .ct-input{
+
+      [data-changtan="1"] .ct-config{
+        display:flex;gap:8px;align-items:center;
+      }
+      [data-changtan="1"] .ct-field{
+        flex:1;
+        display:flex;flex-direction:column;gap:4px;
+        min-width: 0;
+      }
+      [data-changtan="1"] .ct-label{
+        font-size:10.5px;color:var(--ct-muted);
+        display:flex;justify-content:space-between;gap:8px;
+      }
+      [data-changtan="1"] .ct-mini{
+        font-size:10.5px;color:rgba(229,231,235,0.85);
+        opacity:0.9;
+      }
+      [data-changtan="1"] .ct-select, [data-changtan="1"] .ct-text{
+        width:100%;
+        border-radius:12px;border:1px solid var(--ct-border);
+        background: rgba(255,255,255,0.03);
+        color: var(--ct-text);
+        font-size:12.5px;outline:none;
+        padding:8px 10px;
+        box-sizing:border-box;
+      }
+      [data-changtan="1"] .ct-text::placeholder{ color: rgba(229,231,235,0.45); }
+
+      [data-changtan="1"] .ct-row{ display:flex;gap:8px;align-items:flex-end; }
+      [data-changtan="1"] .ct-input{
         flex:1;min-height:40px;max-height:120px;resize:none;
         padding:10px 10px;border-radius:14px;border:1px solid var(--ct-border);
         background: rgba(255,255,255,0.03);
         color: var(--ct-text);
         font-size:13.5px;outline:none;
+        box-sizing:border-box;
       }
-      .ct-input::placeholder{ color: rgba(229,231,235,0.45); }
-      .ct-send{
+      [data-changtan="1"] .ct-input::placeholder{ color: rgba(229,231,235,0.45); }
+      [data-changtan="1"] .ct-send{
         width:44px;height:44px;border-radius:14px;
         border:1px solid rgba(47,107,255,0.35);
         background: rgba(47,107,255,0.16);
@@ -218,44 +310,88 @@
         display:flex;align-items:center;justify-content:center;
         user-select:none;
       }
-      .ct-send:disabled{ opacity:0.5; cursor:not-allowed; }
+      [data-changtan="1"] .ct-send:disabled{ opacity:0.5; cursor:not-allowed; }
 
-      .ct-status{ display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--ct-muted); }
-      .ct-status b{ color: rgba(229,231,235,0.9); font-weight:650; }
+      [data-changtan="1"] .ct-status{ display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--ct-muted); }
+      [data-changtan="1"] .ct-status b{ color: rgba(229,231,235,0.9); font-weight:650; }
+
+      [data-changtan="1"] .ct-linkbtn{
+        all: unset;
+        cursor: pointer;
+        font-size: 10.5px;
+        color: rgba(229,231,235,0.9);
+        opacity: 0.9;
+        text-decoration: underline;
+      }
+      [data-changtan="1"] .ct-linkbtn:hover{ opacity: 1; }
     `;
 
-    const styleTag = $("style", { "data-changtan-style": "1" }, [document.createTextNode(CSS)]);
-    document.head.appendChild(styleTag);
+    document.head.appendChild($("style", { "data-changtan-style": "1" }, [document.createTextNode(CSS)]));
 
+    // ------------------------------------------------------------
+    // UI build
+    // ------------------------------------------------------------
     const root = $("div", { class: "ct-root", "data-changtan": "1" });
     const panel = $("div", { class: "ct-panel", role: "dialog", "aria-label": "Changtan chat" });
 
-    const sessionPill = $("span", { class: "ct-pill", "data-ct-session": "1" }, [
-      document.createTextNode(CFG.conversationId ? `id:${String(CFG.conversationId).slice(0, 10)}…` : "anonymous")
+    const statusPill = $("span", { class: "ct-pill", "data-ct-status": "1" }, [document.createTextNode("unconfigured")]);
+    const modelPill = $("span", { class: "ct-pill", "data-ct-model": "1" }, [document.createTextNode("model: -")]);
+
+    const body = $("div", { class: "ct-body" });
+    const textarea = $("textarea", { class: "ct-input", rows: "1", placeholder: "Type a message…" });
+    const sendBtn = $("button", { class: "ct-send", type: "button" }, [document.createTextNode("📨")]);
+
+    // Config controls
+    const baseUrlInput = $("input", { class: "ct-text", type: "text", placeholder: "API base URL (https://…)", value: CFG.api.defaultBaseUrl || "" });
+    const tokenBtn = $("button", { class: "ct-btn", type: "button", title: "Connect" }, [document.createTextNode("🔑")]);
+    const refreshModelsBtn = $("button", { class: "ct-btn", type: "button", title: "Refresh models" }, [document.createTextNode("↻")]);
+
+    const modelSelect = $("select", { class: "ct-select" }, [
+      $("option", { value: "" }, [document.createTextNode("Loading models…")])
     ]);
-    const statusPill = $("span", { class: "ct-pill", "data-ct-status": "1" }, [document.createTextNode("disconnected")]);
 
     const header = $("div", { class: "ct-header" }, [
       $("div", { class: "ct-title" }, [
         $("div", { class: "ct-name" }, [document.createTextNode(`${CFG.launcherEmoji} ${CFG.title}`)]),
-        sessionPill
+        modelPill
       ]),
       $("div", { class: "ct-actions" }, [
-        $("button", { class: "ct-btn", type: "button", title: "Clear", onClick: () => API.clear() }, [document.createTextNode("🧹")]),
-        $("button", { class: "ct-btn", type: "button", title: "Close", onClick: () => API.close() }, [document.createTextNode("✖️")])
+        $("button", { class: "ct-btn", type: "button", title: "Clear" , onClick: () => API.clear() }, [document.createTextNode("🧹")]),
+        $("button", { class: "ct-btn", type: "button", title: "Close" , onClick: () => API.close() }, [document.createTextNode("✖️")])
       ])
     ]);
 
-    const body = $("div", { class: "ct-body" });
-    const textarea = $("textarea", { class: "ct-input", rows: "1", placeholder: "Type a message… (Shift+Enter = new line)" });
-    const sendBtn = $("button", { class: "ct-send", type: "button" }, [document.createTextNode("📨")]);
+    const configRow = $("div", { class: "ct-config" }, [
+      $("div", { class: "ct-field" }, [
+        $("div", { class: "ct-label" }, [
+          document.createTextNode("API Endpoint"),
+          $("button", {
+            class: "ct-linkbtn",
+            type: "button",
+            title: "Token is kept in memory only",
+            onClick: () => addMessage("assistant", "Token is stored in memory only and disappears when the tab closes.")
+          }, [document.createTextNode("memory-only token")])
+        ]),
+        baseUrlInput
+      ]),
+      tokenBtn,
+      refreshModelsBtn
+    ]);
+
+    const modelRow = $("div", { class: "ct-config" }, [
+      $("div", { class: "ct-field" }, [
+        $("div", { class: "ct-label" }, [
+          document.createTextNode("Model"),
+          $("span", { class: "ct-mini" }, [statusPill])
+        ]),
+        modelSelect
+      ])
+    ]);
 
     const footer = $("div", { class: "ct-footer" }, [
-      $("div", { class: "ct-row" }, [textarea, sendBtn]),
-      $("div", { class: "ct-status" }, [
-        $("span", {}, [document.createTextNode("Mode: "), $("b", {}, [document.createTextNode(CFG.modeLabel)])]),
-        statusPill
-      ])
+      configRow,
+      modelRow,
+      $("div", { class: "ct-row" }, [textarea, sendBtn])
     ]);
 
     panel.append(header, body, footer);
@@ -270,30 +406,21 @@
     root.append(launcher, panel);
     document.body.appendChild(root);
 
-    // Close on outside click
-    document.addEventListener("mousedown", (e) => {
-      if (!STATE.open) return;
-      if (root.contains(e.target)) return;
-      API.close();
-    });
-
     // ------------------------------------------------------------
-    // STATE + RENDERING
+    // STATE
     // ------------------------------------------------------------
     const STATE = {
       open: false,
-      connecting: false,
-      connected: false,
-      ws: null,
-      endpointIndex: 0,
-      conversationId: CFG.conversationId,
-      streaming: false,
-      messages: [],      // {role,user|assistant,content,ts}
-      currentAssistantId: null
+      token: null,           // in-memory only
+      baseUrl: normalizeBaseUrl(CFG.api.defaultBaseUrl || ""),
+      models: [],
+      selectedModel: CFG.ui.defaultModel || null,
+      messages: [],
+      busy: false
     };
 
     const setStatus = (txt) => { statusPill.textContent = txt; };
-
+    const setModelPill = (modelId) => { modelPill.textContent = modelId ? `model: ${modelId}` : "model: -"; };
     const scrollToBottom = () => { body.scrollTop = body.scrollHeight; };
 
     const renderMsg = (m) => {
@@ -307,7 +434,6 @@
       wrap.append(stack);
       body.append(wrap);
       scrollToBottom();
-      return { wrap, bubble };
     };
 
     const addMessage = (role, content) => {
@@ -317,202 +443,195 @@
       return msg;
     };
 
-    const upsertStreamingAssistant = () => {
-      // Find an existing streaming bubble
-      let node = body.querySelector('[data-ct-stream="1"]');
-      if (node) return node;
-
-      const wrap = $("div", { class: "ct-msg ct-bot", "data-ct-stream": "1" });
-      const bubble = $("div", { class: "ct-bubble", "data-ct-stream-bubble": "1" }, []);
-      const meta = $("div", { class: "ct-meta" }, [document.createTextNode("assistant • streaming")]);
-      const stack = $("div", { style: "display:flex;flex-direction:column;gap:4px;max-width:84%;" }, [bubble, meta]);
-      wrap.append(stack);
-      body.append(wrap);
-      scrollToBottom();
-      return wrap;
-    };
-
-    const finalizeStreamingAssistant = () => {
-      const wrap = body.querySelector('[data-ct-stream="1"]');
-      if (!wrap) return "";
-      wrap.removeAttribute("data-ct-stream");
-      const bubble = wrap.querySelector('[data-ct-stream-bubble="1"]');
-      bubble?.removeAttribute("data-ct-stream-bubble");
-      const meta = wrap.querySelector(".ct-meta");
-      if (meta) meta.textContent = `assistant • ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-      return bubble ? bubble.textContent : "";
+    const setBusy = (v) => {
+      STATE.busy = !!v;
+      sendBtn.disabled = STATE.busy;
+      tokenBtn.disabled = STATE.busy;
+      refreshModelsBtn.disabled = STATE.busy;
+      baseUrlInput.disabled = STATE.busy;
+      modelSelect.disabled = STATE.busy || !STATE.token;
     };
 
     const system = (text) => addMessage("assistant", `⚠️ ${text}`);
 
+    // Close on outside click
+    document.addEventListener("mousedown", (e) => {
+      if (!STATE.open) return;
+      if (root.contains(e.target)) return;
+      API.close();
+    });
+
     // ------------------------------------------------------------
-    // WEBSOCKET STREAMING (no client intents, pure relay)
-    // Contract (suggested):
-    // Client -> Server: { type:"user", conversationId, text, meta }
-    // Server -> Client:
-    //   { type:"meta", conversationId }
-    //   { type:"delta", text:"..." }   (stream tokens)
-    //   { type:"done" }
-    //   { type:"error", message:"..." }
+    // API client (token in memory only)
     // ------------------------------------------------------------
-    const WS = (() => {
-      const nextEndpoint = () => {
-        if (!CFG.wsEndpoints.length) return null;
-        const idx = STATE.endpointIndex % CFG.wsEndpoints.length;
-        return { url: CFG.wsEndpoints[idx], idx };
+    const ApiClient = (() => {
+      const timeoutMs = CFG.api.requestTimeoutMs | 0;
+
+      const getBaseUrl = () => normalizeBaseUrl(STATE.baseUrl);
+      const tokenHeaderName = String(CFG.api.apiKeyHeader || "x-api-key");
+
+      const requireBaseUrl = () => {
+        const b = getBaseUrl();
+        if (!b) throw new Error("Missing API base URL.");
+        return b;
       };
 
-      const close = () => {
-        try { STATE.ws?.close?.(); } catch {}
-        STATE.ws = null;
-        STATE.connected = false;
-        STATE.connecting = false;
-        setStatus("disconnected");
+      const requireToken = () => {
+        if (!STATE.token) throw new Error("Not connected (missing token). Click 🔑 to fetch token.");
+        return STATE.token;
       };
 
-      const connect = async () => {
-        if (STATE.connected || STATE.connecting) return true;
-        if (!CFG.wsEndpoints.length) {
-          setStatus("missing endpoint");
-          system("No WebSocket endpoint configured (CTChatConfig.wsEndpoints).");
-          return false;
-        }
-
-        STATE.connecting = true;
-        setStatus("connecting…");
-
-        // Attempt endpoints sequentially (failover)
-        for (let attempt = 0; attempt < CFG.wsEndpoints.length; attempt++) {
-          const ep = nextEndpoint();
-          if (!ep) break;
-
-          const ok = await new Promise((resolve) => {
-            let ws;
-            try {
-              ws = new WebSocket(ep.url);
-            } catch (e) {
-              return resolve(false);
-            }
-
-            let settled = false;
-            const settle = (v) => {
-              if (settled) return;
-              settled = true;
-              resolve(v);
-            };
-
-            const timer = setTimeout(() => {
-              try { ws.close(); } catch {}
-              settle(false);
-            }, 2500);
-
-            ws.onopen = () => {
-              clearTimeout(timer);
-              STATE.ws = ws;
-              STATE.connected = true;
-              STATE.connecting = false;
-              setStatus("connected");
-              settle(true);
-            };
-
-            ws.onerror = () => {
-              clearTimeout(timer);
-              try { ws.close(); } catch {}
-              settle(false);
-            };
-
-            ws.onclose = () => {
-              // If it closes after being connected, reflect it
-              if (STATE.ws === ws) close();
-            };
-
-            ws.onmessage = (ev) => {
-              handleServerMessage(ev.data);
-            };
-          });
-
-          if (ok) return true;
-          STATE.endpointIndex = (STATE.endpointIndex + 1) % CFG.wsEndpoints.length;
-        }
-
-        STATE.connecting = false;
-        STATE.connected = false;
-        setStatus("unavailable");
-        system("WebSocket connection failed. Please try again later.");
-        return false;
+      const authHeaders = () => {
+        const tok = requireToken();
+        return { [tokenHeaderName]: tok };
       };
 
-      const sendUser = async (text) => {
-        const ok = await connect();
-        if (!ok || !STATE.ws) return;
+      const fetchToken = async () => {
+        const base = requireBaseUrl();
+        const url = joinUrl(base, CFG.api.tokenPath);
+        const res = await abortableFetch(url, { method: "GET" }, timeoutMs);
+        const txt = await res.text().catch(() => "");
+        if (!res.ok) throw new Error(`Token request failed (${res.status}). ${txt || ""}`.trim());
 
-        // Start streaming UI
-        STATE.streaming = true;
-        const wrap = upsertStreamingAssistant();
-        const bubble = wrap.querySelector('[data-ct-stream-bubble="1"]');
-        if (bubble) bubble.textContent = "";
+        let data;
+        try { data = txt ? JSON.parse(txt) : {}; } catch { data = { raw: txt }; }
 
-        const payload = {
-          type: "user",
-          conversationId: STATE.conversationId,
-          text,
-          meta: {
-            client: CFG.client,
-            page: { url: location.href, title: document.title },
-            ts: Date.now()
-          }
-        };
+        // Flexible parsing:
+        // accept {token:"..."} or {data:{token:"..."}} or plain string
+        const token =
+          (typeof data === "string" && data) ||
+          data?.token ||
+          data?.data?.token ||
+          data?.key ||
+          data?.data?.key ||
+          (typeof data?.data === "string" ? data.data : null);
 
-        try {
-          STATE.ws.send(JSON.stringify(payload));
-        } catch (e) {
-          STATE.streaming = false;
-          body.querySelector('[data-ct-stream="1"]')?.remove();
-          system("Failed to send message. Connection is not available.");
-          close();
-        }
+        if (!token) throw new Error("Token response did not contain a token field.");
+        return String(token);
       };
 
-      const handleServerMessage = (raw) => {
-        let msg = null;
-        try { msg = JSON.parse(raw); } catch {
-          // If server sends plain text tokens, treat as delta
-          msg = { type: "delta", text: String(raw || "") };
-        }
-
-        if (!msg || typeof msg !== "object") return;
-
-        if (msg.type === "meta" && msg.conversationId) {
-          STATE.conversationId = msg.conversationId;
-          sessionPill.textContent = `id:${String(msg.conversationId).slice(0, 10)}…`;
-          return;
-        }
-
-        if (msg.type === "delta") {
-          const wrap = upsertStreamingAssistant();
-          const bubble = wrap.querySelector('[data-ct-stream-bubble="1"]');
-          if (bubble) bubble.textContent += (msg.text || "");
-          scrollToBottom();
-          return;
-        }
-
-        if (msg.type === "done") {
-          STATE.streaming = false;
-          const final = finalizeStreamingAssistant();
-          addMessage("assistant", final || "");
-          return;
-        }
-
-        if (msg.type === "error") {
-          STATE.streaming = false;
-          body.querySelector('[data-ct-stream="1"]')?.remove();
-          system(msg.message ? String(msg.message) : "Streaming error.");
-          return;
-        }
+      const listModels = async () => {
+        const base = requireBaseUrl();
+        const url = joinUrl(base, CFG.api.modelsPath);
+        const res = await abortableFetch(url, { method: "GET", headers: { ...authHeaders() } }, timeoutMs);
+        const json = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(`Model list failed (${res.status}).`);
+        const arr = json?.data;
+        if (!Array.isArray(arr)) throw new Error("Invalid models response (expected {data:[...]}).");
+        return arr;
       };
 
-      return { connect, close, sendUser };
+      const infer = async (text, modelId) => {
+        const base = requireBaseUrl();
+        const url = joinUrl(base, CFG.api.inferPath);
+        const payload = { text: String(text || ""), model: String(modelId || "") };
+
+        const res = await abortableFetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", ...authHeaders() },
+          body: JSON.stringify(payload)
+        }, timeoutMs);
+
+        const json = await res.json().catch(() => null);
+        if (!res.ok) {
+          const msg = json?.error || json?.message || `Infer failed (${res.status}).`;
+          throw new Error(String(msg));
+        }
+
+        const content =
+          json?.choices?.[0]?.message?.content ??
+          json?.data?.choices?.[0]?.message?.content ??
+          json?.message?.content ??
+          null;
+
+        if (!content) throw new Error("Invalid infer response (missing assistant content).");
+        return String(content);
+      };
+
+      return { fetchToken, listModels, infer };
     })();
+
+    // ------------------------------------------------------------
+    // Models UI
+    // ------------------------------------------------------------
+    const rebuildModelSelect = () => {
+      modelSelect.innerHTML = "";
+      if (!STATE.models.length) {
+        modelSelect.append($("option", { value: "" }, [document.createTextNode("No models")]));
+        modelSelect.value = "";
+        setModelPill(null);
+        STATE.selectedModel = null;
+        return;
+      }
+
+      const preferred = STATE.selectedModel || CFG.ui.defaultModel;
+      for (const m of STATE.models) {
+        const id = String(m?.id || "");
+        const name = String(m?.model_spec?.name || id || "model");
+        const opt = $("option", { value: id }, [document.createTextNode(`${name} (${id})`)]);
+        modelSelect.append(opt);
+      }
+
+      const firstId = String(STATE.models[0]?.id || "");
+      const chosen = (preferred && STATE.models.some(x => String(x?.id) === String(preferred)))
+        ? String(preferred)
+        : firstId;
+
+      modelSelect.value = chosen;
+      STATE.selectedModel = chosen;
+      setModelPill(chosen);
+    };
+
+    const connectAndLoadModels = async () => {
+      STATE.baseUrl = normalizeBaseUrl(baseUrlInput.value);
+      if (!STATE.baseUrl) {
+        system("Please provide an API base URL.");
+        return;
+      }
+
+      setBusy(true);
+      setStatus("connecting…");
+      try {
+        const tok = await ApiClient.fetchToken();
+        STATE.token = tok;
+        setStatus("token ok");
+
+        const models = await ApiClient.listModels();
+        STATE.models = models;
+
+        rebuildModelSelect();
+        setStatus("ready");
+        addMessage("assistant", "Connected. Models loaded.");
+      } catch (e) {
+        STATE.token = null;
+        STATE.models = [];
+        rebuildModelSelect();
+        setStatus("unavailable");
+        system(String(e?.message || e));
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    const refreshModels = async () => {
+      if (!STATE.token) {
+        system("Not connected. Click 🔑 first.");
+        return;
+      }
+      setBusy(true);
+      setStatus("loading models…");
+      try {
+        const models = await ApiClient.listModels();
+        STATE.models = models;
+        rebuildModelSelect();
+        setStatus("ready");
+      } catch (e) {
+        setStatus("unavailable");
+        system(String(e?.message || e));
+      } finally {
+        setBusy(false);
+      }
+    };
 
     // ------------------------------------------------------------
     // INPUT
@@ -533,17 +652,63 @@
       if (e.key === "Escape") API.close();
     });
 
-    sendBtn.addEventListener("click", () => {
+    const send = async () => {
       const v = (textarea.value || "").trim();
       if (!v) return;
+
+      if (!STATE.token) {
+        system("Not connected. Set API base URL, then click 🔑.");
+        return;
+      }
+      const model = modelSelect.value || STATE.selectedModel;
+      if (!model) {
+        system("No model selected.");
+        return;
+      }
+
       textarea.value = "";
       autoResize();
       addMessage("user", v);
-      WS.sendUser(v);
+
+      setBusy(true);
+      setStatus("thinking…");
+      try {
+        const out = await ApiClient.infer(v, model);
+        addMessage("assistant", out);
+        setStatus("ready");
+      } catch (e) {
+        setStatus("ready");
+        system(String(e?.message || e));
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    sendBtn.addEventListener("click", send);
+
+    tokenBtn.addEventListener("click", connectAndLoadModels);
+    refreshModelsBtn.addEventListener("click", refreshModels);
+
+    modelSelect.addEventListener("change", () => {
+      STATE.selectedModel = modelSelect.value || null;
+      setModelPill(STATE.selectedModel);
+    });
+
+    baseUrlInput.addEventListener("change", () => {
+      // changing base url invalidates token + models
+      const next = normalizeBaseUrl(baseUrlInput.value);
+      if (next !== STATE.baseUrl) {
+        STATE.baseUrl = next;
+        STATE.token = null;
+        STATE.models = [];
+        STATE.selectedModel = null;
+        rebuildModelSelect();
+        setStatus("unconfigured");
+      }
     });
 
     // ------------------------------------------------------------
-    // PUBLIC API (generic + future-proof)
+    // PUBLIC API
     // ------------------------------------------------------------
     const API = {
       open: () => {
@@ -551,8 +716,6 @@
         panel.classList.add("ct-open");
         textarea.focus();
         scrollToBottom();
-        // Connect lazily but quickly, without blocking UI
-        WS.connect();
       },
       close: () => {
         STATE.open = false;
@@ -562,32 +725,33 @@
       clear: () => {
         STATE.messages = [];
         body.innerHTML = "";
-        system("Chat cleared.");
+        addMessage("assistant", "Chat cleared.");
       },
-      setConversationId: (id) => {
-        STATE.conversationId = id || null;
-        sessionPill.textContent = STATE.conversationId ? `id:${String(STATE.conversationId).slice(0, 10)}…` : "anonymous";
-      },
-      getState: () => ({
-        open: STATE.open,
-        connected: STATE.connected,
-        connecting: STATE.connecting,
-        conversationId: STATE.conversationId,
-        endpointIndex: STATE.endpointIndex,
-        endpoints: CFG.wsEndpoints.slice(),
-        messages: STATE.messages.slice()
-      })
+      // Optional helpers for host page:
+      isConnected: () => !!STATE.token,
+      getSelectedModel: () => STATE.selectedModel,
+      disconnect: () => {
+        // memory-only token: clear in-memory state
+        STATE.token = null;
+        STATE.models = [];
+        STATE.selectedModel = null;
+        rebuildModelSelect();
+        setStatus("unconfigured");
+        addMessage("assistant", "Disconnected (token cleared).");
+      }
     };
 
     window.CTChat = API;
 
-    // Minimal boot message (kept short; all English)
-    addMessage("assistant", "Ready. Messages are streamed from the server.");
-    setStatus(CFG.wsEndpoints.length ? "disconnected" : "missing endpoint");
+    // ------------------------------------------------------------
+    // Boot
+    // ------------------------------------------------------------
+    addMessage("assistant", "Ready. Set API base URL, click 🔑, select model, then chat.");
+    setStatus("unconfigured");
+    rebuildModelSelect();
     autoResize();
 
   } catch (e) {
-    // Never break host page
     console.warn("[CHANGTAN] Fatal boot error:", e);
   }
 })();
