@@ -142,6 +142,26 @@
         --ct-font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
       }
 
+      /* dark mode if possible*/
+      [data-changtan="1"].ct-root,
+      [data-changtan="1"] .ct-panel,
+      [data-changtan="1"] .ct-select,
+      [data-changtan="1"] .ct-text,
+      [data-changtan="1"] .ct-input{
+        color-scheme: dark;
+      }
+
+      /* Select + options (support variable selon navigateur/OS) */
+      [data-changtan="1"] .ct-select{
+        background-color: rgba(17,24,39,0.92);
+        color: var(--ct-text);
+      }
+      [data-changtan="1"] .ct-select option,
+      [data-changtan="1"] .ct-select optgroup{
+        background-color: rgba(17,24,39,0.98);
+        color: var(--ct-text);
+      }
+
       [data-changtan="1"].ct-root{
         position:fixed;
         left:${CFG.offset}px;
@@ -198,12 +218,20 @@
 
       [data-changtan="1"] .ct-panel{
         position:absolute;left:0;bottom:70px;
-        width:${CFG.width}px;height:${CFG.height}px;
+
+        /* Responsive: exploite l’espace sans full-screen */
+        width: min(520px, calc(100vw - ${CFG.offset * 2}px));
+        height: min(720px, calc(100dvh - ${CFG.offset * 2 + 70}px));
+
         border-radius:var(--ct-radius);
         border:1px solid var(--ct-border);
         background: rgba(11,15,25,0.85);
         box-shadow:var(--ct-shadow);
         overflow:hidden;
+
+        display:flex;
+        flex-direction:column;
+
         transform-origin: bottom left;
         transform: scale(0.92);
         opacity:0;
@@ -246,10 +274,12 @@
       [data-changtan="1"] .ct-btn:disabled{ opacity:0.5; cursor:not-allowed; }
 
       [data-changtan="1"] .ct-body{
-        height: calc(100% - 56px - 120px);
+        flex: 1;
         overflow:auto;
         padding: 14px 12px 18px 12px;
+        overscroll-behavior: contain;
       }
+
       [data-changtan="1"] .ct-msg{ display:flex;gap:10px;margin:10px 0;align-items:flex-end; }
       [data-changtan="1"] .ct-msg.ct-user{ justify-content:flex-end; }
       [data-changtan="1"] .ct-bubble{
@@ -268,8 +298,11 @@
       [data-changtan="1"] .ct-meta{ font-size:10.5px;color:var(--ct-muted);margin-top:6px; }
 
       [data-changtan="1"] .ct-footer{
-        height:120px;display:flex;flex-direction:column;gap:8px;
-        padding:10px 12px;
+        flex: 0 0 auto;
+        display:flex;
+        flex-direction:column;
+        gap:8px;
+        padding:10px 12px calc(10px + env(safe-area-inset-bottom, 0px)) 12px;
         border-top:1px solid var(--ct-border);
         background: rgba(0,0,0,0.10);
       }
@@ -363,6 +396,49 @@
         border: 1px solid rgba(47,107,255,0.45);
         background: rgba(47,107,255,0.18);
       }
+      /* Scrollbars dark (Firefox + WebKit) */
+      [data-changtan="1"] .ct-body{
+        scrollbar-width: thin;
+        scrollbar-color: rgba(229,231,235,0.28) rgba(255,255,255,0.06);
+      }
+
+      [data-changtan="1"] .ct-body::-webkit-scrollbar{
+        width: 10px;
+        height: 10px;
+      }
+      [data-changtan="1"] .ct-body::-webkit-scrollbar-track{
+        background: rgba(255,255,255,0.05);
+        border-radius: 999px;
+      }
+      [data-changtan="1"] .ct-body::-webkit-scrollbar-thumb{
+        background: rgba(229,231,235,0.22);
+        border: 2px solid rgba(255,255,255,0.05);
+        border-radius: 999px;
+      }
+      [data-changtan="1"] .ct-body::-webkit-scrollbar-thumb:hover{
+        background: rgba(229,231,235,0.30);
+      }
+
+      @media (min-width: 1024px){
+        [data-changtan="1"] .ct-panel{
+          width: min(640px, calc(100vw - ${CFG.offset * 2}px));
+          height: min(820px, calc(100vh - ${CFG.offset * 2 + 70}px));
+        }
+        [data-changtan="1"] .ct-bubble{ max-width: 78%; }
+      }
+      
+      @media (max-width: 480px){
+        [data-changtan="1"].ct-root{
+          left: 12px;
+          bottom: 12px;
+        }
+        [data-changtan="1"] .ct-panel{
+          bottom: 64px;
+          width: calc(100vw - 24px);
+          height: calc(100dvh - 24px - 64px);
+        }
+      }
+      
     `;
 
     document.head.appendChild($("style", { "data-changtan-style": "1" }, [document.createTextNode(CSS)]));
