@@ -244,10 +244,14 @@
         transform:scale(1) !important;
         opacity:1 !important;
         pointer-events:auto !important;
-        display:block !important;
+      
+        /* CRITIQUE : garder le flex */
+        display:flex !important;
+        flex-direction:column !important;
+      
         visibility:visible !important;
       }
-
+      
       [data-changtan="1"] .ct-header{
         height:56px;display:flex;align-items:center;justify-content:space-between;
         padding:0 12px 0 14px;
@@ -278,6 +282,10 @@
         overflow:auto;
         padding: 14px 12px 18px 12px;
         overscroll-behavior: contain;
+        min-height: 0;        /* indispensable en flex */
+        scrollbar-width: thin;
+        scrollbar-color: rgba(229,231,235,0.28) rgba(255,255,255,0.06);
+        -webkit-overflow-scrolling: touch;
       }
 
       [data-changtan="1"] .ct-msg{ display:flex;gap:10px;margin:10px 0;align-items:flex-end; }
@@ -288,7 +296,10 @@
         border:1px solid var(--ct-border);
         color:var(--ct-text);
         font-size:13.5px;line-height:1.35;
-        white-space: pre-wrap; word-break: break-word;
+        white-space: pre-wrap;
+        word-break: normal;
+        overflow-wrap: break-word;   /* break only when needed */
+        hyphens: none;
         background: rgba(255,255,255,0.06);
       }
       [data-changtan="1"] .ct-user .ct-bubble{
@@ -305,6 +316,7 @@
         padding:10px 12px calc(10px + env(safe-area-inset-bottom, 0px)) 12px;
         border-top:1px solid var(--ct-border);
         background: rgba(0,0,0,0.10);
+        flex-shrink: 0;      
       }
 
       [data-changtan="1"] .ct-config{
@@ -396,11 +408,7 @@
         border: 1px solid rgba(47,107,255,0.45);
         background: rgba(47,107,255,0.18);
       }
-      /* Scrollbars dark (Firefox + WebKit) */
-      [data-changtan="1"] .ct-body{
-        scrollbar-width: thin;
-        scrollbar-color: rgba(229,231,235,0.28) rgba(255,255,255,0.06);
-      }
+
 
       [data-changtan="1"] .ct-body::-webkit-scrollbar{
         width: 10px;
@@ -422,7 +430,7 @@
       @media (min-width: 1024px){
         [data-changtan="1"] .ct-panel{
           width: min(640px, calc(100vw - ${CFG.offset * 2}px));
-          height: min(820px, calc(100vh - ${CFG.offset * 2 + 70}px));
+          height: min(820px, calc(100dvh - ${CFG.offset * 2 + 70}px));
         }
         [data-changtan="1"] .ct-bubble{ max-width: 78%; }
       }
@@ -436,6 +444,38 @@
           bottom: 64px;
           width: calc(100vw - 24px);
           height: calc(100dvh - 24px - 64px);
+        }
+        [data-changtan="1"] .ct-btn{
+          width:30px;
+          height:30px;
+          border-radius:10px;
+          font-size:16px;     /* réduit les emojis */
+          line-height:1;
+        }
+      
+        [data-changtan="1"] .ct-send{
+          width:40px;
+          height:40px;
+          border-radius:14px;
+          font-size:16px;
+          line-height:1;
+        }
+      
+        [data-changtan="1"] .ct-launcher{
+          width:52px;
+          height:52px;
+          font-size:22px;
+          line-height:1;
+        }
+      
+        [data-changtan="1"] .ct-modal-card{
+          max-width: 360px;
+        }
+        [data-changtan="1"] .ct-modal-actions .ct-btn{
+          width:auto;                 /* boutons texte */
+          height:34px;
+          padding:0 10px;
+          font-size:13px;
         }
       }
       
