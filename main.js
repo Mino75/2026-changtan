@@ -488,7 +488,25 @@
     // ------------------------------------------------------------
     const root = $("div", { class: "ct-root", "data-changtan": "1" });
     const panel = $("div", { class: "ct-panel", role: "dialog", "aria-label": "Changtan chat" });
-
+    
+    const historyBtn = $("button", {
+      class: "ct-btn",
+      type: "button",
+      title: "History: off",
+      "aria-label": "Toggle history",
+      onClick: () => {
+        STATE.useHistory = !STATE.useHistory;
+        refreshHistoryBtn();
+        system(`History ${STATE.useHistory ? "enabled" : "disabled"}.`);
+      }
+    }, [document.createTextNode("🧠")]);
+    
+    const refreshHistoryBtn = () => {
+      historyBtn.textContent = STATE.useHistory ? "🧠" : "🧠🚫";
+      historyBtn.title = `History: ${STATE.useHistory ? "on" : "off"}`;
+      historyBtn.setAttribute("aria-pressed", STATE.useHistory ? "true" : "false");
+    };
+    
     const statusPill = $("span", { class: "ct-pill", "data-ct-status": "1" }, [document.createTextNode("disconnected")]);
     const modelPill = $("span", { class: "ct-pill", "data-ct-model": "1" }, [document.createTextNode("model: -")]);
 
@@ -583,7 +601,8 @@
       models: [],
       selectedModel: CFG.ui.defaultModel || null,
       messages: [],
-      busy: false
+      busy: false,
+      useHistory: true
     };
 
     const setStatus = (txt) => { statusPill.textContent = txt; };
@@ -605,6 +624,39 @@
       scrollToBottom();
     };
 
+const MAX_HISTORY_CHARS = 800;
+
+const historyLine = (m) => {
+  const t = new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const who = whoLabel(m.role); // "you" ou "papougai"
+  const content = String(m.content || "").replace(/\s+$/g, "");
+  return `[${t}] ${who}: ${content}`;
+};
+
+  // History
+  const buildHistoryString = () => {
+    // Option :  "Ready." 
+    const msgs = STATE.messages.filter((m) => (m && m.content && m.content !== "Ready."));
+  
+    const picked = [];
+    let total = 0;
+  
+    // recenet to old
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const line = historyLine(msgs[i]);
+      const addLen = (picked.length ? 1 : 0) + line.length; // + "\n" if content
+  
+      if (total + addLen > MAX_HISTORY_CHARS) break;
+  
+      picked.push(line);
+      total += addLen;
+    }
+  
+    return picked.reverse().join("\n");
+  };
+  
+
+    
     const addMessage = (role, content) => {
       const msg = { id: `${role[0]}_${Math.random().toString(16).slice(2)}`, role, content, ts: new Date().toISOString() };
       STATE.messages.push(msg);
@@ -676,7 +728,13 @@
 
       const infer = async (text, modelId) => {
         const url = joinUrl(baseUrl, CFG.api.inferPath);
-        const payload = { text: String(text || ""), model: String(modelId || "") };
+        const history = STATE.useHistory ? buildHistoryString() : null;
+        
+        const payload = {
+          text: String(text || ""),
+          model: String(modelId || ""),
+          history // null si désactivé, sinon string <= 800 chars
+        };
 
         const res = await abortableFetch(url, {
           method: "POST",
@@ -900,7 +958,8 @@
     rebuildModelSelect();
     autoResize();
     sendBtn.disabled = true;
-
+    refreshHistoryBtn();
+    
   } catch (e) {
     console.warn("[CHANGTAN] Fatal boot error:", e);
   }
