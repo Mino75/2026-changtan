@@ -1,6 +1,6 @@
 # 🦜 Changtan
 
-**Changtan** (長談) comes from Mandarin and literally means *"long conversation"*.  
+**Changtan** (長談) means *"long conversation"*.  
 It is an embeddable chat widget designed to integrate into any web page via a single `<script>` tag.
 
 ---
